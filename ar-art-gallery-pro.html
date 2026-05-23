@@ -1,0 +1,1834 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>AR Art Gallery Pro - Virtual Wall Art</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            overflow: hidden;
+            background: #000;
+        }
+
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+
+        #ar-canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        /* UI Overlay */
+        #ui-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        /* Top Bar */
+        #top-bar {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            right: 20px;
+            display: flex;
+            gap: 12px;
+            pointer-events: auto;
+        }
+
+        #search-panel {
+            flex: 1;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 16px;
+            transition: transform 0.3s ease;
+        }
+
+        #search-panel.hidden {
+            transform: translateY(-120%);
+        }
+
+        .top-btn {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(10px);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+
+        .top-btn:active {
+            transform: scale(0.9);
+        }
+
+        .badge {
+            position: absolute;
+            top: -6px;
+            right: -6px;
+            background: #ff4444;
+            color: white;
+            border-radius: 10px;
+            padding: 2px 6px;
+            font-size: 10px;
+            font-weight: bold;
+        }
+
+        #search-input {
+            width: 100%;
+            padding: 12px 16px;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            background: rgba(255, 255, 255, 0.15);
+            color: white;
+            margin-bottom: 12px;
+        }
+
+        #search-input::placeholder {
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .search-filters {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+            overflow-x: auto;
+            scrollbar-width: none;
+        }
+
+        .search-filters::-webkit-scrollbar {
+            display: none;
+        }
+
+        .filter-chip {
+            padding: 6px 12px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 20px;
+            color: white;
+            font-size: 12px;
+            white-space: nowrap;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .filter-chip.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-color: transparent;
+        }
+
+        #search-btn {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        /* Art Gallery */
+        #art-gallery {
+            position: absolute;
+            bottom: 160px;
+            left: 0;
+            right: 0;
+            max-height: 200px;
+            overflow-x: auto;
+            overflow-y: hidden;
+            display: flex;
+            gap: 12px;
+            padding: 0 20px;
+            pointer-events: auto;
+            scrollbar-width: none;
+        }
+
+        #art-gallery::-webkit-scrollbar {
+            display: none;
+        }
+
+        .art-item {
+            min-width: 140px;
+            height: 180px;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+            border: 2px solid transparent;
+            position: relative;
+        }
+
+        .art-item:active {
+            transform: scale(0.95);
+        }
+
+        .art-item.selected {
+            border-color: #667eea;
+        }
+
+        .art-item img {
+            width: 100%;
+            height: 140px;
+            object-fit: cover;
+        }
+
+        .art-item-title {
+            padding: 8px;
+            font-size: 11px;
+            color: white;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .favorite-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            width: 32px;
+            height: 32px;
+            background: rgba(0, 0, 0, 0.6);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            z-index: 2;
+        }
+
+        .favorite-btn.active {
+            background: #ff4444;
+        }
+
+        .buy-badge {
+            position: absolute;
+            bottom: 40px;
+            left: 8px;
+            background: rgba(40, 167, 69, 0.9);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 10px;
+            font-weight: bold;
+        }
+
+        /* Bottom Controls */
+        #bottom-controls {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 16px;
+            pointer-events: auto;
+        }
+
+        .control-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .control-btn {
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 12px;
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+            gap: 4px;
+        }
+
+        .control-btn span {
+            font-size: 10px;
+            opacity: 0.8;
+        }
+
+        .control-btn:active {
+            transform: scale(0.9);
+            background: rgba(102, 126, 234, 0.4);
+        }
+
+        .control-btn.primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            grid-column: span 2;
+        }
+
+        /* Measurement Display */
+        #measurement-display {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 16px 24px;
+            border-radius: 12px;
+            font-size: 14px;
+            pointer-events: none;
+            display: none;
+        }
+
+        #measurement-display.active {
+            display: block;
+        }
+
+        /* Modal */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.95);
+            z-index: 1000;
+            display: none;
+            overflow-y: auto;
+        }
+
+        .modal.active {
+            display: block;
+        }
+
+        .modal-content {
+            padding: 60px 20px 20px;
+            max-width: 500px;
+            margin: 0 auto;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+
+        .modal-header h2 {
+            color: white;
+            font-size: 24px;
+        }
+
+        .close-btn {
+            width: 36px;
+            height: 36px;
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+        }
+
+        .favorites-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+        }
+
+        .favorite-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .favorite-card:active {
+            transform: scale(0.95);
+        }
+
+        .favorite-card img {
+            width: 100%;
+            height: 150px;
+            object-fit: cover;
+        }
+
+        .favorite-card-info {
+            padding: 12px;
+        }
+
+        .favorite-card-title {
+            color: white;
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .favorite-card-artist {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 12px;
+        }
+
+        .template-grid {
+            display: grid;
+            gap: 16px;
+        }
+
+        .template-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 16px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 2px solid transparent;
+        }
+
+        .template-card:active {
+            transform: scale(0.98);
+        }
+
+        .template-card.selected {
+            border-color: #667eea;
+            background: rgba(102, 126, 234, 0.2);
+        }
+
+        .template-card h3 {
+            color: white;
+            font-size: 16px;
+            margin-bottom: 8px;
+        }
+
+        .template-card p {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 13px;
+            margin-bottom: 12px;
+        }
+
+        .template-artworks {
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+        }
+
+        .template-artworks img {
+            width: 60px;
+            height: 60px;
+            border-radius: 6px;
+            object-fit: cover;
+        }
+
+        .btn-primary {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 16px;
+        }
+
+        /* Start Screen */
+        #start-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #0a0a0f;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 20px;
+            z-index: 100;
+            text-align: center;
+            overflow: hidden;
+        }
+
+        /* Video Background */
+        .video-background {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            overflow: hidden;
+            z-index: 1;
+        }
+
+        #hero-video {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            min-width: 100%;
+            min-height: 100%;
+            width: auto;
+            height: auto;
+            transform: translate(-50%, -50%);
+            object-fit: cover;
+            opacity: 0;
+            transition: opacity 1s ease-in;
+        }
+
+        #hero-video.loaded {
+            opacity: 1;
+        }
+
+        .video-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(
+                135deg,
+                rgba(10, 10, 15, 0.85) 0%,
+                rgba(26, 26, 46, 0.75) 50%,
+                rgba(10, 10, 15, 0.85) 100%
+            );
+            z-index: 2;
+        }
+
+        /* Parallax Layers */
+        .parallax-layer {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        .parallax-layer-1 {
+            background: radial-gradient(
+                circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+                rgba(102, 126, 234, 0.15) 0%,
+                transparent 50%
+            );
+            z-index: 3;
+            transition: background-position 0.3s ease-out;
+        }
+
+        .parallax-layer-2 {
+            background: radial-gradient(
+                circle at calc(100% - var(--mouse-x, 50%)) calc(100% - var(--mouse-y, 50%)),
+                rgba(118, 75, 162, 0.12) 0%,
+                transparent 50%
+            );
+            z-index: 4;
+            transition: background-position 0.4s ease-out;
+        }
+
+        .parallax-layer-3 {
+            background-image: 
+                radial-gradient(circle at 20% 30%, rgba(102, 126, 234, 0.05) 1px, transparent 1px),
+                radial-gradient(circle at 80% 70%, rgba(118, 75, 162, 0.05) 1px, transparent 1px);
+            background-size: 50px 50px;
+            z-index: 5;
+            animation: float 20s ease-in-out infinite;
+        }
+
+        @keyframes float {
+            0%, 100% {
+                transform: translate(0, 0);
+            }
+            25% {
+                transform: translate(10px, -10px);
+            }
+            50% {
+                transform: translate(-5px, 5px);
+            }
+            75% {
+                transform: translate(5px, 10px);
+            }
+        }
+
+        .hero-background {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                radial-gradient(circle at 20% 30%, rgba(102, 126, 234, 0.08) 0%, transparent 50%),
+                radial-gradient(circle at 80% 70%, rgba(118, 75, 162, 0.08) 0%, transparent 50%);
+            animation: backgroundPulse 8s ease-in-out infinite;
+            z-index: 6;
+        }
+
+        @keyframes backgroundPulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        .hero-background::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image: 
+                repeating-linear-gradient(0deg, rgba(255,255,255,0.02) 0px, transparent 1px, transparent 2px, rgba(255,255,255,0.02) 3px),
+                repeating-linear-gradient(90deg, rgba(255,255,255,0.02) 0px, transparent 1px, transparent 2px, rgba(255,255,255,0.02) 3px);
+            background-size: 40px 40px;
+            animation: gridMove 20s linear infinite;
+        }
+
+        @keyframes gridMove {
+            0% { transform: translate(0, 0); }
+            100% { transform: translate(40px, 40px); }
+        }
+
+        .hero-content {
+            position: relative;
+            z-index: 10;
+            max-width: 600px;
+            animation: fadeInUp 0.8s ease-out;
+            transform-style: preserve-3d;
+            will-change: transform;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .logo-badge {
+            display: inline-block;
+            padding: 8px 20px;
+            background: rgba(102, 126, 234, 0.1);
+            border: 1px solid rgba(102, 126, 234, 0.3);
+            border-radius: 20px;
+            margin-bottom: 24px;
+            animation: badgePulse 2s ease-in-out infinite;
+        }
+
+        @keyframes badgePulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        .badge-text {
+            color: #667eea;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+        }
+
+        .hero-title {
+            margin-bottom: 20px;
+            line-height: 1.1;
+        }
+
+        .gradient-text {
+            font-size: 48px;
+            font-weight: 900;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            display: inline-block;
+            animation: gradientShift 3s ease infinite;
+        }
+
+        @keyframes gradientShift {
+            0%, 100% { filter: hue-rotate(0deg); }
+            50% { filter: hue-rotate(20deg); }
+        }
+
+        .hero-subtitle {
+            font-size: 42px;
+            font-weight: 300;
+            color: white;
+            letter-spacing: -1px;
+        }
+
+        .hero-description {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 18px;
+            line-height: 1.6;
+            margin-bottom: 32px;
+            max-width: 500px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .hero-cta {
+            padding: 18px 40px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 14px;
+            font-size: 18px;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 12px 40px rgba(102, 126, 234, 0.4);
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            transition: all 0.3s ease;
+            margin-bottom: 48px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero-cta::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            transition: left 0.5s;
+        }
+
+        .hero-cta:hover::before {
+            left: 100%;
+        }
+
+        .hero-cta:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 16px 50px rgba(102, 126, 234, 0.6);
+        }
+
+        .hero-cta:active {
+            transform: translateY(0);
+        }
+
+        .cta-icon {
+            font-size: 24px;
+        }
+
+        .cta-arrow {
+            font-size: 20px;
+            transition: transform 0.3s;
+        }
+
+        .hero-cta:hover .cta-arrow {
+            transform: translateX(4px);
+        }
+
+        .feature-cards {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+
+        .feature-card {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 20px;
+            text-align: center;
+            transition: all 0.3s ease;
+            animation: fadeInUp 0.8s ease-out backwards;
+        }
+
+        .feature-card:nth-child(1) { animation-delay: 0.1s; }
+        .feature-card:nth-child(2) { animation-delay: 0.2s; }
+        .feature-card:nth-child(3) { animation-delay: 0.3s; }
+        .feature-card:nth-child(4) { animation-delay: 0.4s; }
+
+        .feature-card:hover {
+            background: rgba(102, 126, 234, 0.1);
+            border-color: rgba(102, 126, 234, 0.3);
+            transform: translateY(-4px);
+        }
+
+        .feature-icon {
+            font-size: 32px;
+            margin-bottom: 8px;
+        }
+
+        .feature-title {
+            color: white;
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .feature-desc {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 13px;
+        }
+
+        .tech-badge {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 12px;
+            animation: fadeIn 1s ease-out 0.6s backwards;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .tech-badge span {
+            white-space: nowrap;
+        }
+
+        /* Responsive adjustments */
+        @media (max-width: 480px) {
+            .gradient-text {
+                font-size: 36px;
+            }
+            
+            .hero-subtitle {
+                font-size: 32px;
+            }
+            
+            .hero-description {
+                font-size: 16px;
+            }
+            
+            .feature-cards {
+                grid-template-columns: 1fr;
+            }
+            
+            .tech-badge {
+                flex-direction: column;
+                gap: 4px;
+            }
+        }
+
+        #status {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 14px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 12px 24px;
+            border-radius: 8px;
+            pointer-events: none;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+
+        .empty-state h3 {
+            color: white;
+            font-size: 18px;
+            margin-bottom: 8px;
+        }
+
+        .empty-state p {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 14px;
+        }
+
+        /* Share Sheet */
+        #share-sheet {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0, 0, 0, 0.95);
+            backdrop-filter: blur(20px);
+            border-radius: 24px 24px 0 0;
+            padding: 24px;
+            transform: translateY(100%);
+            transition: transform 0.3s ease;
+            z-index: 2000;
+        }
+
+        #share-sheet.active {
+            transform: translateY(0);
+        }
+
+        .share-options {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-top: 16px;
+        }
+
+        .share-option {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+        }
+
+        .share-option-icon {
+            width: 56px;
+            height: 56px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+        }
+
+        .share-option-label {
+            color: white;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Start Screen -->
+    <div id="start-screen">
+        <!-- Video Background -->
+        <div class="video-background">
+            <video id="hero-video" autoplay muted loop playsinline>
+                <source id="video-source" src="" type="video/mp4">
+            </video>
+            <div class="video-overlay"></div>
+        </div>
+        
+        <div class="hero-background"></div>
+        
+        <!-- Parallax Layers -->
+        <div class="parallax-layer parallax-layer-1"></div>
+        <div class="parallax-layer parallax-layer-2"></div>
+        <div class="parallax-layer parallax-layer-3"></div>
+        
+        <div class="hero-content" data-parallax>
+            <div class="logo-badge">
+                <span class="badge-text">POWERED BY AR</span>
+            </div>
+            
+            <h1 class="hero-title">
+                <span class="gradient-text">Transform Your Walls</span>
+                <br>
+                <span class="hero-subtitle">With Virtual Art</span>
+            </h1>
+            
+            <p class="hero-description">
+                Experience museum masterpieces in your home before you buy. 
+                Place, resize, and visualize artwork on your walls using augmented reality.
+            </p>
+
+            <button id="start-ar-btn" class="hero-cta">
+                <span class="cta-icon">📱</span>
+                <span>Start AR Experience</span>
+                <span class="cta-arrow">→</span>
+            </button>
+
+            <div class="feature-cards">
+                <div class="feature-card">
+                    <div class="feature-icon">🎨</div>
+                    <div class="feature-title">50,000+ Artworks</div>
+                    <div class="feature-desc">Museum collections at your fingertips</div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📏</div>
+                    <div class="feature-title">Real Measurements</div>
+                    <div class="feature-desc">See exact dimensions in AR</div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">❤️</div>
+                    <div class="feature-title">Save Favorites</div>
+                    <div class="feature-desc">Build your dream collection</div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🛒</div>
+                    <div class="feature-title">Buy Direct</div>
+                    <div class="feature-desc">Purchase what you love</div>
+                </div>
+            </div>
+
+            <div class="tech-badge">
+                <span>✓ iOS Safari 13+</span>
+                <span>•</span>
+                <span>✓ Chrome Android</span>
+                <span>•</span>
+                <span>✓ No App Download</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- AR Canvas -->
+    <div id="canvas-container" class="hidden">
+        <canvas id="ar-canvas"></canvas>
+        
+        <div id="ui-overlay">
+            <!-- Top Bar -->
+            <div id="top-bar">
+                <div id="search-panel">
+                    <input type="text" id="search-input" placeholder="Search artworks...">
+                    
+                    <div class="search-filters">
+                        <div class="filter-chip active" data-source="museum">Museum</div>
+                        <div class="filter-chip" data-source="modern">Modern</div>
+                        <div class="filter-chip" data-source="photography">Photography</div>
+                        <div class="filter-chip" data-source="nft">NFTs</div>
+                    </div>
+                    
+                    <button id="search-btn">Search Art</button>
+                </div>
+                
+                <button class="top-btn" id="favorites-btn">
+                    ❤️
+                    <span class="badge" id="favorites-count">0</span>
+                </button>
+                
+                <button class="top-btn" id="templates-btn">📐</button>
+            </div>
+
+            <!-- Art Gallery -->
+            <div id="art-gallery"></div>
+
+            <!-- Bottom Controls -->
+            <div id="bottom-controls">
+                <div class="control-grid">
+                    <button class="control-btn" id="size-up">
+                        <span>➕</span>
+                        <span>Larger</span>
+                    </button>
+                    <button class="control-btn" id="size-down">
+                        <span>➖</span>
+                        <span>Smaller</span>
+                    </button>
+                    <button class="control-btn" id="measure-btn">
+                        <span>📏</span>
+                        <span>Measure</span>
+                    </button>
+                    <button class="control-btn" id="screenshot-btn">
+                        <span>📸</span>
+                        <span>Photo</span>
+                    </button>
+                    <button class="control-btn primary" id="share-btn">
+                        <span>🔗 Share This View</span>
+                    </button>
+                    <button class="control-btn primary" id="buy-btn">
+                        <span>🛒 Purchase Art</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Measurement Display -->
+            <div id="measurement-display">
+                <div id="measurement-text"></div>
+            </div>
+
+            <!-- Status Message -->
+            <div id="status" class="hidden"></div>
+        </div>
+    </div>
+
+    <!-- Favorites Modal -->
+    <div id="favorites-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>My Favorites</h2>
+                <button class="close-btn" onclick="closeModal('favorites-modal')">×</button>
+            </div>
+            <div id="favorites-list" class="favorites-grid"></div>
+        </div>
+    </div>
+
+    <!-- Templates Modal -->
+    <div id="templates-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Room Templates</h2>
+                <button class="close-btn" onclick="closeModal('templates-modal')">×</button>
+            </div>
+            <div id="templates-list" class="template-grid"></div>
+            <button class="btn-primary" id="apply-template-btn">Apply Selected Template</button>
+        </div>
+    </div>
+
+    <!-- Share Sheet -->
+    <div id="share-sheet">
+        <h3 style="color: white; margin-bottom: 8px;">Share Your Gallery</h3>
+        <p style="color: rgba(255,255,255,0.7); font-size: 14px;">Share this artwork placement</p>
+        
+        <div class="share-options">
+            <div class="share-option" onclick="shareToSocial('twitter')">
+                <div class="share-option-icon">🐦</div>
+                <div class="share-option-label">Twitter</div>
+            </div>
+            <div class="share-option" onclick="shareToSocial('instagram')">
+                <div class="share-option-icon">📷</div>
+                <div class="share-option-label">Instagram</div>
+            </div>
+            <div class="share-option" onclick="shareToSocial('link')">
+                <div class="share-option-icon">🔗</div>
+                <div class="share-option-label">Copy Link</div>
+            </div>
+            <div class="share-option" onclick="shareToSocial('download')">
+                <div class="share-option-icon">💾</div>
+                <div class="share-option-label">Download</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // App State
+        let scene, camera, renderer, reticle, hitTestSource;
+        let currentArtwork = null;
+        let artworks = [];
+        let selectedArt = null;
+        let currentScale = 1;
+        let favorites = JSON.parse(localStorage.getItem('artFavorites') || '[]');
+        let measurementMode = false;
+        let currentSource = 'museum';
+        let selectedTemplate = null;
+
+        // Video Background URLs
+        // TO ADD YOUR VIDEO: 
+        // 1. Download the generated video from Higgsfield above
+        // 2. Host it on a CDN or your server
+        // 3. Replace the empty string below with your video URL
+        const videoBackgrounds = [
+            '', // Add your video URL here: 'https://your-cdn.com/ar-gallery-video.mp4'
+        ];
+
+        // Parallax effect
+        let mouseX = 0;
+        let mouseY = 0;
+
+        // Animated particles fallback
+        function createParticles() {
+            const startScreen = document.getElementById('start-screen');
+            const particleCount = 30;
+            
+            for (let i = 0; i < particleCount; i++) {
+                const particle = document.createElement('div');
+                particle.className = 'particle';
+                particle.style.cssText = `
+                    position: absolute;
+                    width: ${Math.random() * 3 + 1}px;
+                    height: ${Math.random() * 3 + 1}px;
+                    background: rgba(102, 126, 234, ${Math.random() * 0.5 + 0.2});
+                    border-radius: 50%;
+                    left: ${Math.random() * 100}%;
+                    top: ${Math.random() * 100}%;
+                    animation: particleFloat ${Math.random() * 10 + 15}s linear infinite;
+                    animation-delay: ${Math.random() * 5}s;
+                    z-index: 7;
+                    pointer-events: none;
+                `;
+                startScreen.appendChild(particle);
+            }
+            
+            // Add particle animation to CSS if not already present
+            if (!document.getElementById('particle-style')) {
+                const style = document.createElement('style');
+                style.id = 'particle-style';
+                style.textContent = `
+                    @keyframes particleFloat {
+                        0% {
+                            transform: translateY(0) translateX(0) scale(1);
+                            opacity: 0;
+                        }
+                        10% {
+                            opacity: 1;
+                        }
+                        90% {
+                            opacity: 1;
+                        }
+                        100% {
+                            transform: translateY(-100vh) translateX(${Math.random() * 100 - 50}px) scale(0);
+                            opacity: 0;
+                        }
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+        }
+
+        // Initialize video background
+        function initVideoBackground() {
+            const video = document.getElementById('hero-video');
+            const videoSource = document.getElementById('video-source');
+            
+            // Set video source
+            if (videoBackgrounds[0] && videoBackgrounds[0].length > 0) {
+                videoSource.src = videoBackgrounds[0];
+                video.load();
+                
+                video.addEventListener('loadeddata', () => {
+                    video.classList.add('loaded');
+                });
+                
+                video.addEventListener('error', () => {
+                    console.log('Video failed to load, using animated background');
+                    createParticles();
+                });
+            } else {
+                // No video URL provided, use animated particles
+                createParticles();
+            }
+        }
+
+        // Parallax mouse tracking
+        function initParallax() {
+            const startScreen = document.getElementById('start-screen');
+            
+            startScreen.addEventListener('mousemove', (e) => {
+                const rect = startScreen.getBoundingClientRect();
+                mouseX = ((e.clientX - rect.left) / rect.width) * 100;
+                mouseY = ((e.clientY - rect.top) / rect.height) * 100;
+                
+                // Update CSS custom properties for parallax layers
+                document.documentElement.style.setProperty('--mouse-x', `${mouseX}%`);
+                document.documentElement.style.setProperty('--mouse-y', `${mouseY}%`);
+                
+                // Parallax effect on hero content
+                const heroContent = document.querySelector('.hero-content');
+                if (heroContent) {
+                    const moveX = (mouseX - 50) * 0.02;
+                    const moveY = (mouseY - 50) * 0.02;
+                    heroContent.style.transform = `translate(${moveX}px, ${moveY}px)`;
+                }
+            });
+            
+            // Mobile: gyroscope parallax
+            if (window.DeviceOrientationEvent) {
+                window.addEventListener('deviceorientation', (e) => {
+                    const tiltX = e.gamma || 0; // -90 to 90
+                    const tiltY = e.beta || 0;  // -180 to 180
+                    
+                    const normalizedX = 50 + (tiltX / 90) * 25;
+                    const normalizedY = 50 + (tiltY / 180) * 25;
+                    
+                    document.documentElement.style.setProperty('--mouse-x', `${normalizedX}%`);
+                    document.documentElement.style.setProperty('--mouse-y', `${normalizedY}%`);
+                });
+            }
+        }
+
+        // Room Templates
+        const roomTemplates = [
+            {
+                id: 'minimalist',
+                name: 'Minimalist Gallery',
+                description: '3 centered pieces with balanced spacing',
+                artworks: 3,
+                layout: 'horizontal',
+                spacing: 1.5
+            },
+            {
+                id: 'salon',
+                name: 'Salon Wall',
+                description: 'Classic gallery wall with 6-8 pieces',
+                artworks: 7,
+                layout: 'grid',
+                spacing: 0.3
+            },
+            {
+                id: 'focal',
+                name: 'Statement Piece',
+                description: 'Single large artwork as focal point',
+                artworks: 1,
+                layout: 'center',
+                spacing: 0
+            },
+            {
+                id: 'triptych',
+                name: 'Triptych',
+                description: 'Three-panel artistic arrangement',
+                artworks: 3,
+                layout: 'triptych',
+                spacing: 0.2
+            }
+        ];
+
+        // DOM Elements
+        const startScreen = document.getElementById('start-screen');
+        const canvasContainer = document.getElementById('canvas-container');
+        const canvas = document.getElementById('ar-canvas');
+        const searchPanel = document.getElementById('search-panel');
+        const searchInput = document.getElementById('search-input');
+        const searchBtn = document.getElementById('search-btn');
+        const artGallery = document.getElementById('art-gallery');
+        const status = document.getElementById('status');
+        const favoritesBtn = document.getElementById('favorites-btn');
+        const favoritesCount = document.getElementById('favorites-count');
+        const measurementDisplay = document.getElementById('measurement-display');
+        const shareSheet = document.getElementById('share-sheet');
+
+        // Initialize
+        updateFavoritesCount();
+        initVideoBackground();
+        initParallax();
+
+        // Event Listeners
+        document.getElementById('start-ar-btn').addEventListener('click', initAR);
+        
+        // Filter chips
+        document.querySelectorAll('.filter-chip').forEach(chip => {
+            chip.addEventListener('click', () => {
+                document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+                chip.classList.add('active');
+                currentSource = chip.dataset.source;
+            });
+        });
+
+        // Controls
+        document.getElementById('size-up').addEventListener('click', () => {
+            if (currentArtwork) {
+                currentScale *= 1.2;
+                currentArtwork.scale.set(currentScale, currentScale, 1);
+                updateMeasurement();
+            }
+        });
+
+        document.getElementById('size-down').addEventListener('click', () => {
+            if (currentArtwork) {
+                currentScale *= 0.8;
+                currentArtwork.scale.set(currentScale, currentScale, 1);
+                updateMeasurement();
+            }
+        });
+
+        document.getElementById('measure-btn').addEventListener('click', () => {
+            measurementMode = !measurementMode;
+            if (measurementMode) {
+                measurementDisplay.classList.add('active');
+                updateMeasurement();
+            } else {
+                measurementDisplay.classList.remove('active');
+            }
+        });
+
+        document.getElementById('screenshot-btn').addEventListener('click', takeScreenshot);
+        document.getElementById('share-btn').addEventListener('click', () => {
+            shareSheet.classList.add('active');
+            setTimeout(() => shareSheet.classList.remove('active'), 5000);
+        });
+
+        document.getElementById('buy-btn').addEventListener('click', openPurchaseLink);
+        document.getElementById('favorites-btn').addEventListener('click', () => openModal('favorites-modal'));
+        document.getElementById('templates-btn').addEventListener('click', () => {
+            openModal('templates-modal');
+            loadTemplates();
+        });
+
+        searchBtn.addEventListener('click', searchArt);
+        searchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') searchArt();
+        });
+
+        document.getElementById('apply-template-btn').addEventListener('click', applyTemplate);
+
+        // Close share sheet when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!shareSheet.contains(e.target) && e.target.id !== 'share-btn') {
+                shareSheet.classList.remove('active');
+            }
+        });
+
+        async function initAR() {
+            if (!navigator.xr) {
+                showStatus('WebXR not supported. Try Chrome on Android or Safari on iOS 13+');
+                return;
+            }
+
+            try {
+                const supported = await navigator.xr.isSessionSupported('immersive-ar');
+                if (!supported) {
+                    showStatus('AR not supported on this device');
+                    return;
+                }
+
+                startScreen.classList.add('hidden');
+                canvasContainer.classList.remove('hidden');
+                
+                setupScene();
+                await startARSession();
+                
+                // Load default artworks
+                await searchArt('impressionism');
+                
+            } catch (error) {
+                console.error('AR Init Error:', error);
+                showStatus('Error starting AR: ' + error.message);
+            }
+        }
+
+        function setupScene() {
+            scene = new THREE.Scene();
+            
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+            
+            const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+            scene.add(light);
+
+            // Reticle
+            const geometry = new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2);
+            const material = new THREE.MeshBasicMaterial({ 
+                color: 0x667eea, 
+                opacity: 0.7, 
+                transparent: true 
+            });
+            reticle = new THREE.Mesh(geometry, material);
+            reticle.matrixAutoUpdate = false;
+            reticle.visible = false;
+            scene.add(reticle);
+
+            renderer = new THREE.WebGLRenderer({ 
+                canvas, 
+                alpha: true, 
+                antialias: true,
+                preserveDrawingBuffer: true // For screenshots
+            });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+        }
+
+        async function startARSession() {
+            const session = await navigator.xr.requestSession('immersive-ar', {
+                requiredFeatures: ['hit-test'],
+                optionalFeatures: ['dom-overlay'],
+                domOverlay: { root: document.getElementById('ui-overlay') }
+            });
+
+            session.addEventListener('end', onSessionEnded);
+            await renderer.xr.setSession(session);
+            
+            session.requestReferenceSpace('viewer').then((refSpace) => {
+                session.requestHitTestSource({ space: refSpace }).then((source) => {
+                    hitTestSource = source;
+                });
+            });
+
+            renderer.setAnimationLoop(render);
+            
+            canvas.addEventListener('click', placeArtwork);
+        }
+
+        function render(timestamp, frame) {
+            if (frame) {
+                const referenceSpace = renderer.xr.getReferenceSpace();
+                const hitTestResults = frame.getHitTestResults(hitTestSource);
+
+                if (hitTestResults.length > 0) {
+                    const hit = hitTestResults[0];
+                    const pose = hit.getPose(referenceSpace);
+                    
+                    reticle.visible = true;
+                    reticle.matrix.fromArray(pose.transform.matrix);
+                } else {
+                    reticle.visible = false;
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        function placeArtwork() {
+            if (!selectedArt || !reticle.visible) return;
+
+            if (currentArtwork) {
+                scene.remove(currentArtwork);
+            }
+
+            const loader = new THREE.TextureLoader();
+            loader.crossOrigin = 'anonymous';
+            
+            loader.load(
+                selectedArt.imageUrl,
+                (texture) => {
+                    const aspect = texture.image.width / texture.image.height;
+                    const width = 1;
+                    const height = width / aspect;
+
+                    const geometry = new THREE.PlaneGeometry(width, height);
+                    const material = new THREE.MeshBasicMaterial({ 
+                        map: texture,
+                        side: THREE.DoubleSide
+                    });
+
+                    currentArtwork = new THREE.Mesh(geometry, material);
+                    currentArtwork.position.setFromMatrixPosition(reticle.matrix);
+                    currentArtwork.quaternion.setFromRotationMatrix(reticle.matrix);
+                    
+                    currentScale = 1;
+                    currentArtwork.scale.set(1, 1, 1);
+                    currentArtwork.userData = {
+                        originalWidth: width,
+                        originalHeight: height,
+                        art: selectedArt
+                    };
+                    
+                    scene.add(currentArtwork);
+                    showStatus(`Placed: ${selectedArt.title}`);
+                    
+                    if (measurementMode) {
+                        updateMeasurement();
+                    }
+                },
+                undefined,
+                (error) => {
+                    console.error('Error loading texture:', error);
+                    showStatus('Error loading artwork image');
+                }
+            );
+        }
+
+        async function searchArt(query = null) {
+            const searchQuery = query || searchInput.value || 'monet';
+            showStatus('Searching artworks...');
+
+            try {
+                let artworksData = [];
+
+                // Different sources based on filter
+                if (currentSource === 'museum') {
+                    const response = await fetch(
+                        `https://api.artic.edu/api/v1/artworks/search?q=${encodeURIComponent(searchQuery)}&limit=20&fields=id,title,artist_display,image_id,date_display`
+                    );
+                    const data = await response.json();
+                    
+                    artworksData = data.data
+                        .filter(art => art.image_id)
+                        .map(art => ({
+                            id: art.id,
+                            title: art.title,
+                            artist: art.artist_display || 'Unknown Artist',
+                            date: art.date_display,
+                            imageUrl: `https://www.artic.edu/iiif/2/${art.image_id}/full/843,/0/default.jpg`,
+                            thumbnailUrl: `https://www.artic.edu/iiif/2/${art.image_id}/full/200,/0/default.jpg`,
+                            source: 'Art Institute of Chicago',
+                            purchaseUrl: `https://www.artic.edu/artworks/${art.id}`
+                        }));
+                } else if (currentSource === 'modern') {
+                    // Simulate modern art source
+                    artworksData = generatePlaceholderArt('Modern Art', searchQuery);
+                } else if (currentSource === 'photography') {
+                    artworksData = generatePlaceholderArt('Photography', searchQuery);
+                } else if (currentSource === 'nft') {
+                    artworksData = generatePlaceholderArt('NFT Collection', searchQuery);
+                }
+
+                artworks = artworksData;
+                displayArtGallery();
+                status.classList.add('hidden');
+                
+                if (artworks.length === 0) {
+                    showStatus('No artworks found. Try a different search.');
+                }
+            } catch (error) {
+                console.error('Search error:', error);
+                showStatus('Error searching artworks. Please try again.');
+            }
+        }
+
+        function generatePlaceholderArt(category, query) {
+            // Placeholder for other art sources (you'd integrate real APIs here)
+            return Array.from({ length: 10 }, (_, i) => ({
+                id: `${category}-${i}`,
+                title: `${query} ${category} #${i + 1}`,
+                artist: `Artist ${i + 1}`,
+                imageUrl: `https://picsum.photos/800/1000?random=${Date.now()}-${i}`,
+                thumbnailUrl: `https://picsum.photos/200/250?random=${Date.now()}-${i}`,
+                source: category,
+                purchaseUrl: '#',
+                price: `$${(Math.random() * 1000 + 100).toFixed(2)}`
+            }));
+        }
+
+        function displayArtGallery() {
+            artGallery.innerHTML = '';
+            
+            artworks.forEach((art, index) => {
+                const isFavorite = favorites.some(f => f.id === art.id);
+                
+                const artItem = document.createElement('div');
+                artItem.className = 'art-item';
+                if (index === 0 && !selectedArt) {
+                    artItem.classList.add('selected');
+                    selectedArt = art;
+                }
+                
+                artItem.innerHTML = `
+                    <div class="favorite-btn ${isFavorite ? 'active' : ''}" onclick="toggleFavorite(event, ${index})">
+                        ${isFavorite ? '❤️' : '🤍'}
+                    </div>
+                    ${art.price ? `<div class="buy-badge">$${art.price}</div>` : ''}
+                    <img src="${art.thumbnailUrl}" alt="${art.title}" onerror="this.src='https://via.placeholder.com/200x250?text=Art'">
+                    <div class="art-item-title">${art.title}</div>
+                `;
+                
+                artItem.addEventListener('click', (e) => {
+                    if (e.target.classList.contains('favorite-btn')) return;
+                    
+                    document.querySelectorAll('.art-item').forEach(item => {
+                        item.classList.remove('selected');
+                    });
+                    artItem.classList.add('selected');
+                    selectedArt = art;
+                    showStatus(`Selected: ${art.title}`);
+                });
+                
+                artGallery.appendChild(artItem);
+            });
+        }
+
+        function toggleFavorite(event, index) {
+            event.stopPropagation();
+            const art = artworks[index];
+            const existingIndex = favorites.findIndex(f => f.id === art.id);
+            
+            if (existingIndex > -1) {
+                favorites.splice(existingIndex, 1);
+                showStatus('Removed from favorites');
+            } else {
+                favorites.push(art);
+                showStatus('Added to favorites');
+            }
+            
+            localStorage.setItem('artFavorites', JSON.stringify(favorites));
+            updateFavoritesCount();
+            displayArtGallery();
+        }
+
+        function updateFavoritesCount() {
+            favoritesCount.textContent = favorites.length;
+            favoritesCount.style.display = favorites.length > 0 ? 'block' : 'none';
+        }
+
+        function updateMeasurement() {
+            if (!currentArtwork || !measurementMode) return;
+            
+            const width = currentArtwork.userData.originalWidth * currentScale;
+            const height = currentArtwork.userData.originalHeight * currentScale;
+            
+            const widthInches = (width * 39.37).toFixed(1);
+            const heightInches = (height * 39.37).toFixed(1);
+            const widthCm = (width * 100).toFixed(1);
+            const heightCm = (height * 100).toFixed(1);
+            
+            document.getElementById('measurement-text').innerHTML = `
+                <strong>Artwork Dimensions:</strong><br>
+                ${widthInches}" × ${heightInches}" (inches)<br>
+                ${widthCm} × ${heightCm} cm
+            `;
+        }
+
+        function takeScreenshot() {
+            try {
+                // Capture the canvas
+                const dataUrl = renderer.domElement.toDataURL('image/png');
+                
+                // Create download link
+                const link = document.createElement('a');
+                link.download = `ar-gallery-${Date.now()}.png`;
+                link.href = dataUrl;
+                link.click();
+                
+                showStatus('Screenshot saved!');
+            } catch (error) {
+                console.error('Screenshot error:', error);
+                showStatus('Error taking screenshot');
+            }
+        }
+
+        function shareToSocial(platform) {
+            const art = selectedArt || (currentArtwork && currentArtwork.userData.art);
+            
+            if (!art) {
+                showStatus('Please select an artwork first');
+                return;
+            }
+
+            const text = `Check out "${art.title}" in AR! 🎨`;
+            const url = window.location.href;
+
+            switch (platform) {
+                case 'twitter':
+                    window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`);
+                    break;
+                case 'instagram':
+                    showStatus('Take a screenshot to share on Instagram');
+                    takeScreenshot();
+                    break;
+                case 'link':
+                    navigator.clipboard.writeText(url);
+                    showStatus('Link copied to clipboard!');
+                    break;
+                case 'download':
+                    takeScreenshot();
+                    break;
+            }
+            
+            shareSheet.classList.remove('active');
+        }
+
+        function openPurchaseLink() {
+            const art = selectedArt || (currentArtwork && currentArtwork.userData.art);
+            
+            if (!art) {
+                showStatus('Please select an artwork first');
+                return;
+            }
+
+            if (art.purchaseUrl && art.purchaseUrl !== '#') {
+                window.open(art.purchaseUrl, '_blank');
+            } else {
+                showStatus('Purchase link coming soon! This would link to art marketplace.');
+            }
+        }
+
+        function openModal(modalId) {
+            document.getElementById(modalId).classList.add('active');
+            
+            if (modalId === 'favorites-modal') {
+                loadFavorites();
+            }
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.remove('active');
+        }
+
+        function loadFavorites() {
+            const favoritesList = document.getElementById('favorites-list');
+            
+            if (favorites.length === 0) {
+                favoritesList.innerHTML = `
+                    <div class="empty-state" style="grid-column: span 2;">
+                        <div class="empty-state-icon">💔</div>
+                        <h3>No Favorites Yet</h3>
+                        <p>Tap the heart icon on artworks to save them here</p>
+                    </div>
+                `;
+                return;
+            }
+
+            favoritesList.innerHTML = '';
+            favorites.forEach(art => {
+                const card = document.createElement('div');
+                card.className = 'favorite-card';
+                card.innerHTML = `
+                    <img src="${art.thumbnailUrl}" alt="${art.title}">
+                    <div class="favorite-card-info">
+                        <div class="favorite-card-title">${art.title}</div>
+                        <div class="favorite-card-artist">${art.artist}</div>
+                    </div>
+                `;
+                
+                card.addEventListener('click', () => {
+                    selectedArt = art;
+                    closeModal('favorites-modal');
+                    showStatus(`Selected: ${art.title}`);
+                });
+                
+                favoritesList.appendChild(card);
+            });
+        }
+
+        function loadTemplates() {
+            const templatesList = document.getElementById('templates-list');
+            templatesList.innerHTML = '';
+            
+            roomTemplates.forEach(template => {
+                const card = document.createElement('div');
+                card.className = 'template-card';
+                card.innerHTML = `
+                    <h3>${template.name}</h3>
+                    <p>${template.description}</p>
+                    <div class="template-artworks">
+                        ${Array.from({ length: Math.min(template.artworks, 4) }).map((_, i) => 
+                            `<img src="https://picsum.photos/60/60?random=${template.id}-${i}" alt="Preview">`
+                        ).join('')}
+                    </div>
+                `;
+                
+                card.addEventListener('click', () => {
+                    document.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
+                    card.classList.add('selected');
+                    selectedTemplate = template;
+                });
+                
+                templatesList.appendChild(card);
+            });
+        }
+
+        function applyTemplate() {
+            if (!selectedTemplate) {
+                showStatus('Please select a template first');
+                return;
+            }
+
+            closeModal('templates-modal');
+            showStatus(`${selectedTemplate.name} template ready! Tap the wall to place your gallery.`);
+            
+            // In a full implementation, this would create multiple artworks
+            // based on the template layout
+        }
+
+        function showStatus(message) {
+            status.textContent = message;
+            status.classList.remove('hidden');
+            setTimeout(() => {
+                status.classList.add('hidden');
+            }, 3000);
+        }
+
+        function onSessionEnded() {
+            hitTestSource = null;
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
