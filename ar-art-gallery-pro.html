@@ -477,8 +477,8 @@
             overflow: hidden;
         }
 
-        /* Video Background */
-        .video-background {
+        /* CSS Animated Background */
+        .animated-background {
             position: absolute;
             top: 0;
             left: 0;
@@ -488,36 +488,233 @@
             z-index: 1;
         }
 
-        #hero-video {
+        /* Gradient Orbs */
+        .gradient-orb {
             position: absolute;
-            top: 50%;
+            border-radius: 50%;
+            filter: blur(80px);
+            opacity: 0.6;
+            animation: floatOrb 20s ease-in-out infinite;
+        }
+
+        .orb-1 {
+            width: 400px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(102, 126, 234, 0.6) 0%, transparent 70%);
+            top: -10%;
+            left: -10%;
+            animation-delay: 0s;
+        }
+
+        .orb-2 {
+            width: 500px;
+            height: 500px;
+            background: radial-gradient(circle, rgba(118, 75, 162, 0.5) 0%, transparent 70%);
+            bottom: -15%;
+            right: -15%;
+            animation-delay: 5s;
+            animation-duration: 25s;
+        }
+
+        .orb-3 {
+            width: 350px;
+            height: 350px;
+            background: radial-gradient(circle, rgba(240, 147, 251, 0.4) 0%, transparent 70%);
+            top: 40%;
             left: 50%;
-            min-width: 100%;
-            min-height: 100%;
-            width: auto;
-            height: auto;
-            transform: translate(-50%, -50%);
-            object-fit: cover;
-            opacity: 0;
-            transition: opacity 1s ease-in;
+            animation-delay: 10s;
+            animation-duration: 30s;
         }
 
-        #hero-video.loaded {
-            opacity: 1;
+        @keyframes floatOrb {
+            0%, 100% {
+                transform: translate(0, 0) scale(1);
+            }
+            25% {
+                transform: translate(30px, -30px) scale(1.1);
+            }
+            50% {
+                transform: translate(-20px, 20px) scale(0.9);
+            }
+            75% {
+                transform: translate(20px, -10px) scale(1.05);
+            }
         }
 
-        .video-overlay {
+        /* Floating Art Frames */
+        .floating-frames {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        .art-frame {
+            position: absolute;
+            background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+            border: 2px solid rgba(102, 126, 234, 0.2);
+            border-radius: 8px;
+            backdrop-filter: blur(5px);
+            box-shadow: 
+                0 8px 32px rgba(102, 126, 234, 0.1),
+                inset 0 0 20px rgba(102, 126, 234, 0.05);
+        }
+
+        .frame-1 {
+            width: 200px;
+            height: 280px;
+            top: 10%;
+            left: 5%;
+            animation: floatFrame 15s ease-in-out infinite;
+            animation-delay: 0s;
+        }
+
+        .frame-2 {
+            width: 160px;
+            height: 220px;
+            top: 60%;
+            left: 15%;
+            animation: floatFrame 18s ease-in-out infinite;
+            animation-delay: 3s;
+        }
+
+        .frame-3 {
+            width: 180px;
+            height: 250px;
+            top: 15%;
+            right: 10%;
+            animation: floatFrame 20s ease-in-out infinite;
+            animation-delay: 6s;
+        }
+
+        .frame-4 {
+            width: 140px;
+            height: 200px;
+            bottom: 15%;
+            right: 20%;
+            animation: floatFrame 16s ease-in-out infinite;
+            animation-delay: 9s;
+        }
+
+        .frame-5 {
+            width: 220px;
+            height: 300px;
+            top: 35%;
+            left: 8%;
+            animation: floatFrame 22s ease-in-out infinite;
+            animation-delay: 12s;
+            opacity: 0.5;
+        }
+
+        @keyframes floatFrame {
+            0%, 100% {
+                transform: translateY(0) rotate(0deg);
+                opacity: 0.3;
+            }
+            25% {
+                transform: translateY(-20px) rotate(2deg);
+                opacity: 0.5;
+            }
+            50% {
+                transform: translateY(-10px) rotate(-1deg);
+                opacity: 0.4;
+            }
+            75% {
+                transform: translateY(-15px) rotate(1deg);
+                opacity: 0.6;
+            }
+        }
+
+        /* Particle Field */
+        .particle-field {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        .particle {
+            position: absolute;
+            background: rgba(102, 126, 234, 0.4);
+            border-radius: 50%;
+        }
+
+        .particle:nth-child(1) { width: 3px; height: 3px; top: 20%; left: 10%; animation: particleFloat 12s linear infinite; animation-delay: 0s; }
+        .particle:nth-child(2) { width: 2px; height: 2px; top: 40%; left: 20%; animation: particleFloat 15s linear infinite; animation-delay: 2s; }
+        .particle:nth-child(3) { width: 4px; height: 4px; top: 60%; left: 30%; animation: particleFloat 18s linear infinite; animation-delay: 4s; }
+        .particle:nth-child(4) { width: 2px; height: 2px; top: 30%; left: 50%; animation: particleFloat 14s linear infinite; animation-delay: 1s; }
+        .particle:nth-child(5) { width: 3px; height: 3px; top: 70%; left: 60%; animation: particleFloat 16s linear infinite; animation-delay: 3s; }
+        .particle:nth-child(6) { width: 2px; height: 2px; top: 15%; left: 70%; animation: particleFloat 13s linear infinite; animation-delay: 5s; }
+        .particle:nth-child(7) { width: 4px; height: 4px; top: 50%; left: 80%; animation: particleFloat 17s linear infinite; animation-delay: 2s; }
+        .particle:nth-child(8) { width: 3px; height: 3px; top: 80%; left: 15%; animation: particleFloat 19s linear infinite; animation-delay: 6s; }
+        .particle:nth-child(9) { width: 2px; height: 2px; top: 25%; left: 85%; animation: particleFloat 14s linear infinite; animation-delay: 4s; }
+        .particle:nth-child(10) { width: 3px; height: 3px; top: 65%; left: 90%; animation: particleFloat 16s linear infinite; animation-delay: 7s; }
+        .particle:nth-child(11) { width: 2px; height: 2px; top: 10%; left: 40%; animation: particleFloat 15s linear infinite; animation-delay: 1s; }
+        .particle:nth-child(12) { width: 4px; height: 4px; top: 45%; left: 25%; animation: particleFloat 18s linear infinite; animation-delay: 3s; }
+        .particle:nth-child(13) { width: 3px; height: 3px; top: 75%; left: 45%; animation: particleFloat 13s linear infinite; animation-delay: 5s; }
+        .particle:nth-child(14) { width: 2px; height: 2px; top: 35%; left: 65%; animation: particleFloat 17s linear infinite; animation-delay: 2s; }
+        .particle:nth-child(15) { width: 3px; height: 3px; top: 55%; left: 75%; animation: particleFloat 14s linear infinite; animation-delay: 6s; }
+        .particle:nth-child(16) { width: 2px; height: 2px; top: 85%; left: 35%; animation: particleFloat 16s linear infinite; animation-delay: 4s; }
+        .particle:nth-child(17) { width: 4px; height: 4px; top: 22%; left: 55%; animation: particleFloat 19s linear infinite; animation-delay: 7s; }
+        .particle:nth-child(18) { width: 3px; height: 3px; top: 48%; left: 12%; animation: particleFloat 15s linear infinite; animation-delay: 1s; }
+        .particle:nth-child(19) { width: 2px; height: 2px; top: 68%; left: 82%; animation: particleFloat 13s linear infinite; animation-delay: 3s; }
+        .particle:nth-child(20) { width: 3px; height: 3px; top: 12%; left: 92%; animation: particleFloat 17s linear infinite; animation-delay: 5s; }
+
+        @keyframes particleFloat {
+            0% {
+                transform: translateY(100vh) translateX(0) scale(0);
+                opacity: 0;
+            }
+            10% {
+                opacity: 1;
+            }
+            90% {
+                opacity: 1;
+            }
+            100% {
+                transform: translateY(-20vh) translateX(var(--particle-drift, 30px)) scale(1);
+                opacity: 0;
+            }
+        }
+
+        /* Scan Lines Effect */
+        .scan-lines {
             position: absolute;
             top: 0;
             left: 0;
             right: 0;
             bottom: 0;
-            background: linear-gradient(
-                135deg,
-                rgba(10, 10, 15, 0.85) 0%,
-                rgba(26, 26, 46, 0.75) 50%,
-                rgba(10, 10, 15, 0.85) 100%
+            background: repeating-linear-gradient(
+                0deg,
+                rgba(102, 126, 234, 0.03) 0px,
+                rgba(102, 126, 234, 0.03) 1px,
+                transparent 1px,
+                transparent 3px
             );
+            pointer-events: none;
+            animation: scanLineMove 8s linear infinite;
+            opacity: 0.5;
+        }
+
+        @keyframes scanLineMove {
+            0% {
+                transform: translateY(0);
+            }
+            100% {
+                transform: translateY(20px);
+            }
+        }
+
+        /* Background Overlay */
+        .background-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                radial-gradient(circle at 50% 50%, transparent 0%, rgba(10, 10, 15, 0.3) 100%),
+                linear-gradient(135deg, rgba(10, 10, 15, 0.7) 0%, rgba(26, 26, 46, 0.6) 50%, rgba(10, 10, 15, 0.7) 100%);
             z-index: 2;
         }
 
@@ -532,7 +729,7 @@
         .parallax-layer-1 {
             background: radial-gradient(
                 circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
-                rgba(102, 126, 234, 0.15) 0%,
+                rgba(102, 126, 234, 0.12) 0%,
                 transparent 50%
             );
             z-index: 3;
@@ -542,7 +739,7 @@
         .parallax-layer-2 {
             background: radial-gradient(
                 circle at calc(100% - var(--mouse-x, 50%)) calc(100% - var(--mouse-y, 50%)),
-                rgba(118, 75, 162, 0.12) 0%,
+                rgba(118, 75, 162, 0.1) 0%,
                 transparent 50%
             );
             z-index: 4;
@@ -580,8 +777,8 @@
             right: 0;
             bottom: 0;
             background: 
-                radial-gradient(circle at 20% 30%, rgba(102, 126, 234, 0.08) 0%, transparent 50%),
-                radial-gradient(circle at 80% 70%, rgba(118, 75, 162, 0.08) 0%, transparent 50%);
+                radial-gradient(circle at 20% 30%, rgba(102, 126, 234, 0.05) 0%, transparent 50%),
+                radial-gradient(circle at 80% 70%, rgba(118, 75, 162, 0.05) 0%, transparent 50%);
             animation: backgroundPulse 8s ease-in-out infinite;
             z-index: 6;
         }
@@ -927,12 +1124,45 @@
 <body>
     <!-- Start Screen -->
     <div id="start-screen">
-        <!-- Video Background -->
-        <div class="video-background">
-            <video id="hero-video" autoplay muted loop playsinline>
-                <source id="video-source" src="" type="video/mp4">
-            </video>
-            <div class="video-overlay"></div>
+        <!-- CSS Animated Background -->
+        <div class="animated-background">
+            <div class="gradient-orb orb-1"></div>
+            <div class="gradient-orb orb-2"></div>
+            <div class="gradient-orb orb-3"></div>
+            
+            <div class="floating-frames">
+                <div class="art-frame frame-1"></div>
+                <div class="art-frame frame-2"></div>
+                <div class="art-frame frame-3"></div>
+                <div class="art-frame frame-4"></div>
+                <div class="art-frame frame-5"></div>
+            </div>
+            
+            <div class="particle-field">
+                <div class="particle"></div>
+                <div class="particle"></div>
+                <div class="particle"></div>
+                <div class="particle"></div>
+                <div class="particle"></div>
+                <div class="particle"></div>
+                <div class="particle"></div>
+                <div class="particle"></div>
+                <div class="particle"></div>
+                <div class="particle"></div>
+                <div class="particle"></div>
+                <div class="particle"></div>
+                <div class="particle"></div>
+                <div class="particle"></div>
+                <div class="particle"></div>
+                <div class="particle"></div>
+                <div class="particle"></div>
+                <div class="particle"></div>
+                <div class="particle"></div>
+                <div class="particle"></div>
+            </div>
+            
+            <div class="scan-lines"></div>
+            <div class="background-overlay"></div>
         </div>
         
         <div class="hero-background"></div>
@@ -1126,92 +1356,9 @@
         let currentSource = 'museum';
         let selectedTemplate = null;
 
-        // Video Background URLs
-        // TO ADD YOUR VIDEO: 
-        // 1. Download the generated video from Higgsfield above
-        // 2. Host it on a CDN or your server
-        // 3. Replace the empty string below with your video URL
-        const videoBackgrounds = [
-            '', // Add your video URL here: 'https://your-cdn.com/ar-gallery-video.mp4'
-        ];
-
         // Parallax effect
         let mouseX = 0;
         let mouseY = 0;
-
-        // Animated particles fallback
-        function createParticles() {
-            const startScreen = document.getElementById('start-screen');
-            const particleCount = 30;
-            
-            for (let i = 0; i < particleCount; i++) {
-                const particle = document.createElement('div');
-                particle.className = 'particle';
-                particle.style.cssText = `
-                    position: absolute;
-                    width: ${Math.random() * 3 + 1}px;
-                    height: ${Math.random() * 3 + 1}px;
-                    background: rgba(102, 126, 234, ${Math.random() * 0.5 + 0.2});
-                    border-radius: 50%;
-                    left: ${Math.random() * 100}%;
-                    top: ${Math.random() * 100}%;
-                    animation: particleFloat ${Math.random() * 10 + 15}s linear infinite;
-                    animation-delay: ${Math.random() * 5}s;
-                    z-index: 7;
-                    pointer-events: none;
-                `;
-                startScreen.appendChild(particle);
-            }
-            
-            // Add particle animation to CSS if not already present
-            if (!document.getElementById('particle-style')) {
-                const style = document.createElement('style');
-                style.id = 'particle-style';
-                style.textContent = `
-                    @keyframes particleFloat {
-                        0% {
-                            transform: translateY(0) translateX(0) scale(1);
-                            opacity: 0;
-                        }
-                        10% {
-                            opacity: 1;
-                        }
-                        90% {
-                            opacity: 1;
-                        }
-                        100% {
-                            transform: translateY(-100vh) translateX(${Math.random() * 100 - 50}px) scale(0);
-                            opacity: 0;
-                        }
-                    }
-                `;
-                document.head.appendChild(style);
-            }
-        }
-
-        // Initialize video background
-        function initVideoBackground() {
-            const video = document.getElementById('hero-video');
-            const videoSource = document.getElementById('video-source');
-            
-            // Set video source
-            if (videoBackgrounds[0] && videoBackgrounds[0].length > 0) {
-                videoSource.src = videoBackgrounds[0];
-                video.load();
-                
-                video.addEventListener('loadeddata', () => {
-                    video.classList.add('loaded');
-                });
-                
-                video.addEventListener('error', () => {
-                    console.log('Video failed to load, using animated background');
-                    createParticles();
-                });
-            } else {
-                // No video URL provided, use animated particles
-                createParticles();
-            }
-        }
 
         // Parallax mouse tracking
         function initParallax() {
@@ -1302,7 +1449,6 @@
 
         // Initialize
         updateFavoritesCount();
-        initVideoBackground();
         initParallax();
 
         // Event Listeners
