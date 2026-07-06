@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>AR Art Gallery Pro - Virtual Wall Art</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
@@ -24,7 +24,20 @@
             position: relative;
         }
 
+        #camera-feed {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: none;
+        }
+
         #ar-canvas {
+            position: relative;
+            z-index: 1;
+            touch-action: none;
             width: 100%;
             height: 100%;
             display: block;
@@ -44,7 +57,7 @@
         /* Top Bar */
         #top-bar {
             position: absolute;
-            top: 20px;
+            top: calc(20px + env(safe-area-inset-top, 0px));
             left: 20px;
             right: 20px;
             display: flex;
@@ -244,7 +257,7 @@
         /* Bottom Controls */
         #bottom-controls {
             position: absolute;
-            bottom: 20px;
+            bottom: calc(20px + env(safe-area-inset-bottom, 0px));
             left: 20px;
             right: 20px;
             background: rgba(0, 0, 0, 0.85);
@@ -1218,9 +1231,9 @@
             </div>
 
             <div class="tech-badge">
-                <span>✓ iOS Safari 13+</span>
+                <span>✓ Full AR on Android (Chrome)</span>
                 <span>•</span>
-                <span>✓ Chrome Android</span>
+                <span>✓ Camera preview on iPhone</span>
                 <span>•</span>
                 <span>✓ No App Download</span>
             </div>
@@ -1229,6 +1242,7 @@
 
     <!-- AR Canvas -->
     <div id="canvas-container" class="hidden">
+        <video id="camera-feed" autoplay playsinline muted></video>
         <canvas id="ar-canvas"></canvas>
         
         <div id="ui-overlay">
@@ -1253,6 +1267,8 @@
                 </button>
                 
                 <button class="top-btn" id="templates-btn">📐</button>
+
+                <button class="top-btn" id="exit-ar-btn" title="Exit AR">✕</button>
             </div>
 
             <!-- Art Gallery -->
@@ -1347,6 +1363,9 @@
     <script>
         // App State
         let scene, camera, renderer, reticle, hitTestSource;
+        let xrSession = null;
+        let fallbackMode = false; // camera-preview mode for browsers without WebXR (e.g. iOS Safari)
+        let videoStream = null;
         let currentArtwork = null;
         let artworks = [];
         let selectedArt = null;
@@ -1518,60 +1537,112 @@
         });
 
         async function initAR() {
-            if (!navigator.xr) {
-                showStatus('WebXR not supported. Try Chrome on Android or Safari on iOS 13+');
+            if (typeof THREE === 'undefined') {
+                showStatus('3D engine failed to load. Check your internet connection and reload the page.');
+                return;
+            }
+            if (!window.isSecureContext) {
+                showStatus('AR needs a secure connection. Open this page over https://');
                 return;
             }
 
+            let xrSupported = false;
+            if (navigator.xr) {
+                try {
+                    xrSupported = await navigator.xr.isSessionSupported('immersive-ar');
+                } catch (e) {
+                    xrSupported = false;
+                }
+            }
+
+            startScreen.classList.add('hidden');
+            canvasContainer.classList.remove('hidden');
+
             try {
-                const supported = await navigator.xr.isSessionSupported('immersive-ar');
-                if (!supported) {
-                    showStatus('AR not supported on this device');
-                    return;
+                if (xrSupported) {
+                    fallbackMode = false;
+                    setupScene();
+                    await startARSession();
+                } else {
+                    await startCameraFallback();
                 }
 
-                startScreen.classList.add('hidden');
-                canvasContainer.classList.remove('hidden');
-                
-                setupScene();
-                await startARSession();
-                
                 // Load default artworks
                 await searchArt('impressionism');
-                
+
             } catch (error) {
                 console.error('AR Init Error:', error);
-                showStatus('Error starting AR: ' + error.message);
+                // WebXR failed (e.g. permission denied mid-session) — try the camera preview instead
+                if (xrSupported && !fallbackMode) {
+                    try {
+                        await startCameraFallback();
+                        await searchArt('impressionism');
+                        return;
+                    } catch (fallbackError) {
+                        console.error('Fallback Error:', fallbackError);
+                    }
+                }
+                exitAR();
+                showStatus('Could not start AR: ' + error.message);
             }
         }
 
+        async function startCameraFallback() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                throw new Error('This browser has no AR or camera support');
+            }
+
+            videoStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+                audio: false
+            });
+
+            const video = document.getElementById('camera-feed');
+            video.srcObject = videoStream;
+            video.style.display = 'block';
+            await video.play();
+
+            fallbackMode = true;
+            setupScene();
+            renderer.xr.enabled = false;
+            renderer.setAnimationLoop(() => renderer.render(scene, camera));
+            setupFallbackGestures();
+
+            showStatus('Preview mode: tap to place art, drag to move, pinch to resize');
+        }
+
         function setupScene() {
-            scene = new THREE.Scene();
-            
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
-            
-            const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
-            scene.add(light);
+            // Safe to call on every AR entry — the renderer/scene are created once and reused
+            if (!scene) {
+                scene = new THREE.Scene();
 
-            // Reticle
-            const geometry = new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2);
-            const material = new THREE.MeshBasicMaterial({ 
-                color: 0x667eea, 
-                opacity: 0.7, 
-                transparent: true 
-            });
-            reticle = new THREE.Mesh(geometry, material);
-            reticle.matrixAutoUpdate = false;
+                const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+                scene.add(light);
+
+                // Reticle
+                const geometry = new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2);
+                const material = new THREE.MeshBasicMaterial({
+                    color: 0x667eea,
+                    opacity: 0.7,
+                    transparent: true
+                });
+                reticle = new THREE.Mesh(geometry, material);
+                reticle.matrixAutoUpdate = false;
+                scene.add(reticle);
+            }
             reticle.visible = false;
-            scene.add(reticle);
 
-            renderer = new THREE.WebGLRenderer({ 
-                canvas, 
-                alpha: true, 
-                antialias: true,
-                preserveDrawingBuffer: true // For screenshots
-            });
-            renderer.setPixelRatio(window.devicePixelRatio);
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+
+            if (!renderer) {
+                renderer = new THREE.WebGLRenderer({
+                    canvas,
+                    alpha: true,
+                    antialias: true,
+                    preserveDrawingBuffer: true // For screenshots
+                });
+                renderer.setPixelRatio(window.devicePixelRatio);
+            }
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
         }
@@ -1583,22 +1654,30 @@
                 domOverlay: { root: document.getElementById('ui-overlay') }
             });
 
+            xrSession = session;
             session.addEventListener('end', onSessionEnded);
-            await renderer.xr.setSession(session);
-            
-            session.requestReferenceSpace('viewer').then((refSpace) => {
-                session.requestHitTestSource({ space: refSpace }).then((source) => {
-                    hitTestSource = source;
-                });
+
+            // Taps on UI buttons must not double as place-artwork taps.
+            // The overlay root has pointer-events: none, so only taps on real
+            // UI children should be suppressed.
+            const uiOverlay = document.getElementById('ui-overlay');
+            uiOverlay.addEventListener('beforexrselect', (e) => {
+                if (e.target !== uiOverlay) e.preventDefault();
             });
 
+            await renderer.xr.setSession(session);
+
+            const viewerSpace = await session.requestReferenceSpace('viewer');
+            hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+
+            // In immersive AR, screen taps arrive as XR select events, not canvas clicks
+            session.addEventListener('select', placeArtwork);
+
             renderer.setAnimationLoop(render);
-            
-            canvas.addEventListener('click', placeArtwork);
         }
 
         function render(timestamp, frame) {
-            if (frame) {
+            if (frame && hitTestSource) {
                 const referenceSpace = renderer.xr.getReferenceSpace();
                 const hitTestResults = frame.getHitTestResults(hitTestSource);
 
@@ -1617,15 +1696,26 @@
         }
 
         function placeArtwork() {
-            if (!selectedArt || !reticle.visible) return;
+            if (!selectedArt) {
+                showStatus('Select an artwork from the strip first');
+                return;
+            }
+            if (!fallbackMode && (!reticle || !reticle.visible)) {
+                showStatus('Point your phone at a wall or floor until the ring appears');
+                return;
+            }
+
+            // Capture the placement pose now — the reticle moves while the texture loads
+            const placementMatrix = fallbackMode ? null : reticle.matrix.clone();
 
             if (currentArtwork) {
                 scene.remove(currentArtwork);
+                currentArtwork = null;
             }
 
             const loader = new THREE.TextureLoader();
             loader.crossOrigin = 'anonymous';
-            
+
             loader.load(
                 selectedArt.imageUrl,
                 (texture) => {
@@ -1634,15 +1724,25 @@
                     const height = width / aspect;
 
                     const geometry = new THREE.PlaneGeometry(width, height);
-                    const material = new THREE.MeshBasicMaterial({ 
+                    const material = new THREE.MeshBasicMaterial({
                         map: texture,
                         side: THREE.DoubleSide
                     });
 
                     currentArtwork = new THREE.Mesh(geometry, material);
-                    currentArtwork.position.setFromMatrixPosition(reticle.matrix);
-                    currentArtwork.quaternion.setFromRotationMatrix(reticle.matrix);
-                    
+
+                    if (fallbackMode) {
+                        // Camera preview: hang the art 2m in front of the camera
+                        currentArtwork.position.set(0, 0, -2);
+                    } else {
+                        currentArtwork.position.setFromMatrixPosition(placementMatrix);
+                        currentArtwork.quaternion.setFromRotationMatrix(placementMatrix);
+                        // The hit-test pose's Y axis is the surface normal; tilt the plane
+                        // so the artwork lies flat against the wall (or floor) instead of
+                        // sticking out perpendicular to it
+                        currentArtwork.rotateX(-Math.PI / 2);
+                    }
+
                     currentScale = 1;
                     currentArtwork.scale.set(1, 1, 1);
                     currentArtwork.userData = {
@@ -1664,6 +1764,82 @@
                     showStatus('Error loading artwork image');
                 }
             );
+        }
+
+        // Touch gestures for camera-preview mode: tap = place, drag = move, pinch = resize
+        const touchState = {
+            mode: null,
+            lastX: 0,
+            lastY: 0,
+            moved: false,
+            startDist: 0,
+            startScale: 1,
+            gesturesReady: false
+        };
+
+        function setupFallbackGestures() {
+            if (touchState.gesturesReady) return;
+            touchState.gesturesReady = true;
+
+            const touchDistance = (touches) => Math.hypot(
+                touches[0].clientX - touches[1].clientX,
+                touches[0].clientY - touches[1].clientY
+            );
+
+            canvas.addEventListener('touchstart', (e) => {
+                if (!fallbackMode) return;
+                if (e.touches.length === 1) {
+                    touchState.mode = 'drag';
+                    touchState.lastX = e.touches[0].clientX;
+                    touchState.lastY = e.touches[0].clientY;
+                    touchState.moved = false;
+                } else if (e.touches.length === 2) {
+                    touchState.mode = 'pinch';
+                    touchState.startDist = touchDistance(e.touches);
+                    touchState.startScale = currentScale;
+                }
+            }, { passive: false });
+
+            canvas.addEventListener('touchmove', (e) => {
+                if (!fallbackMode) return;
+                e.preventDefault();
+
+                if (touchState.mode === 'drag' && e.touches.length === 1 && currentArtwork) {
+                    const dx = e.touches[0].clientX - touchState.lastX;
+                    const dy = e.touches[0].clientY - touchState.lastY;
+                    touchState.lastX = e.touches[0].clientX;
+                    touchState.lastY = e.touches[0].clientY;
+
+                    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) touchState.moved = true;
+
+                    // Convert screen pixels to world units at the artwork's depth
+                    const depth = Math.abs(currentArtwork.position.z);
+                    const worldPerPixel = (2 * depth * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / window.innerHeight;
+                    currentArtwork.position.x += dx * worldPerPixel;
+                    currentArtwork.position.y -= dy * worldPerPixel;
+                } else if (touchState.mode === 'pinch' && e.touches.length === 2 && currentArtwork) {
+                    touchState.moved = true;
+                    const ratio = touchDistance(e.touches) / touchState.startDist;
+                    currentScale = Math.min(10, Math.max(0.1, touchState.startScale * ratio));
+                    currentArtwork.scale.set(currentScale, currentScale, 1);
+                    updateMeasurement();
+                }
+            }, { passive: false });
+
+            canvas.addEventListener('touchend', (e) => {
+                if (!fallbackMode) return;
+                if (e.touches.length === 0) {
+                    if (touchState.mode === 'drag' && !touchState.moved) {
+                        placeArtwork();
+                    }
+                    touchState.mode = null;
+                }
+            });
+
+            // Desktop browsers (for testing the preview mode with a webcam)
+            if (!('ontouchstart' in window)) {
+                canvas.addEventListener('click', placeArtwork);
+            }
         }
 
         async function searchArt(query = null) {
@@ -1746,7 +1922,7 @@
                         ${isFavorite ? '❤️' : '🤍'}
                     </div>
                     ${art.price ? `<div class="buy-badge">$${art.price}</div>` : ''}
-                    <img src="${art.thumbnailUrl}" alt="${art.title}" onerror="this.src='https://via.placeholder.com/200x250?text=Art'">
+                    <img src="${art.thumbnailUrl}" alt="${art.title}" onerror="this.src='https://placehold.co/200x250?text=Art'">
                     <div class="art-item-title">${art.title}</div>
                 `;
                 
@@ -1808,9 +1984,29 @@
 
         function takeScreenshot() {
             try {
-                // Capture the canvas
-                const dataUrl = renderer.domElement.toDataURL('image/png');
-                
+                let dataUrl;
+
+                if (fallbackMode) {
+                    // The camera feed lives in a <video> behind the canvas, so composite the two
+                    const video = document.getElementById('camera-feed');
+                    const composite = document.createElement('canvas');
+                    composite.width = renderer.domElement.width;
+                    composite.height = renderer.domElement.height;
+                    const ctx = composite.getContext('2d');
+
+                    if (video.videoWidth > 0) {
+                        // Match CSS object-fit: cover
+                        const scale = Math.max(composite.width / video.videoWidth, composite.height / video.videoHeight);
+                        const w = video.videoWidth * scale;
+                        const h = video.videoHeight * scale;
+                        ctx.drawImage(video, (composite.width - w) / 2, (composite.height - h) / 2, w, h);
+                    }
+                    ctx.drawImage(renderer.domElement, 0, 0, composite.width, composite.height);
+                    dataUrl = composite.toDataURL('image/png');
+                } else {
+                    dataUrl = renderer.domElement.toDataURL('image/png');
+                }
+
                 // Create download link
                 const link = document.createElement('a');
                 link.download = `ar-gallery-${Date.now()}.png`;
@@ -1968,9 +2164,42 @@
 
         function onSessionEnded() {
             hitTestSource = null;
+            xrSession = null;
+            exitAR();
         }
 
+        function exitAR() {
+            if (xrSession) {
+                const session = xrSession;
+                xrSession = null;
+                session.end().catch(() => {});
+            }
+
+            if (videoStream) {
+                videoStream.getTracks().forEach(track => track.stop());
+                videoStream = null;
+            }
+            const video = document.getElementById('camera-feed');
+            video.srcObject = null;
+            video.style.display = 'none';
+            fallbackMode = false;
+
+            if (renderer) {
+                renderer.setAnimationLoop(null);
+            }
+            if (currentArtwork && scene) {
+                scene.remove(currentArtwork);
+                currentArtwork = null;
+            }
+
+            canvasContainer.classList.add('hidden');
+            startScreen.classList.remove('hidden');
+        }
+
+        document.getElementById('exit-ar-btn').addEventListener('click', exitAR);
+
         window.addEventListener('resize', () => {
+            if (!camera || !renderer || renderer.xr.isPresenting) return;
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
