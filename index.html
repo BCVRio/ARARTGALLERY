@@ -1366,6 +1366,11 @@
         let xrSession = null;
         let fallbackMode = false; // camera-preview mode for browsers without WebXR (e.g. iOS Safari)
         let videoStream = null;
+        // Gyroscope anchoring for the camera-preview mode: the phone's orientation
+        // rotates the virtual camera, so placed artwork stays fixed in space
+        let gyroActive = false;
+        let gyroListenerAdded = false;
+        let deviceQuaternion = null;
         let currentArtwork = null;
         let artworks = [];
         let selectedArt = null;
@@ -1587,10 +1592,54 @@
             }
         }
 
+        async function enableGyroTracking() {
+            if (gyroListenerAdded || typeof DeviceOrientationEvent === 'undefined') return;
+
+            // iOS 13+ only exposes orientation data after an explicit permission
+            // request, and only when triggered from a user gesture — so this must
+            // run before any other await inside the Start button's click handler
+            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                try {
+                    const response = await DeviceOrientationEvent.requestPermission();
+                    if (response !== 'granted') return;
+                } catch (e) {
+                    return;
+                }
+            }
+
+            window.addEventListener('deviceorientation', onDeviceOrientation);
+            gyroListenerAdded = true;
+        }
+
+        function onDeviceOrientation(e) {
+            if (e.alpha === null && e.beta === null && e.gamma === null) return;
+            if (!deviceQuaternion) deviceQuaternion = new THREE.Quaternion();
+
+            const alpha = THREE.MathUtils.degToRad(e.alpha || 0);
+            const beta = THREE.MathUtils.degToRad(e.beta || 0);
+            const gamma = THREE.MathUtils.degToRad(e.gamma || 0);
+            const screenAngle = (screen.orientation && typeof screen.orientation.angle === 'number')
+                ? screen.orientation.angle
+                : (window.orientation || 0);
+            const orient = THREE.MathUtils.degToRad(screenAngle);
+
+            // Device orientation (Z-X'-Y'' intrinsic Tait-Bryan angles) to camera
+            // quaternion — same math as three.js DeviceOrientationControls
+            deviceQuaternion.setFromEuler(new THREE.Euler(beta, alpha, -gamma, 'YXZ'));
+            deviceQuaternion.multiply(new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5)));
+            deviceQuaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -orient));
+
+            gyroActive = true;
+        }
+
         async function startCameraFallback() {
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                 throw new Error('This browser has no AR or camera support');
             }
+
+            // Ask for motion permission first — the camera prompt below would
+            // consume the user-gesture window iOS requires for this
+            await enableGyroTracking();
 
             videoStream = await navigator.mediaDevices.getUserMedia({
                 video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
@@ -1605,10 +1654,15 @@
             fallbackMode = true;
             setupScene();
             renderer.xr.enabled = false;
-            renderer.setAnimationLoop(() => renderer.render(scene, camera));
+            renderer.setAnimationLoop(() => {
+                if (gyroActive && deviceQuaternion) {
+                    camera.quaternion.copy(deviceQuaternion);
+                }
+                renderer.render(scene, camera);
+            });
             setupFallbackGestures();
 
-            showStatus('Preview mode: tap to place art, drag to move, pinch to resize');
+            showStatus('Point at your wall, then tap to hang the art. Drag to move, pinch to resize.');
         }
 
         function setupScene() {
@@ -1732,8 +1786,11 @@
                     currentArtwork = new THREE.Mesh(geometry, material);
 
                     if (fallbackMode) {
-                        // Camera preview: hang the art 2m in front of the camera
-                        currentArtwork.position.set(0, 0, -2);
+                        // Anchor the art 2m away in the direction the phone is
+                        // pointing right now; the gyro rotates the camera with
+                        // the phone, so the art stays put as the user looks around
+                        currentArtwork.position.set(0, 0, -2).applyQuaternion(camera.quaternion);
+                        currentArtwork.quaternion.copy(camera.quaternion);
                     } else {
                         currentArtwork.position.setFromMatrixPosition(placementMatrix);
                         currentArtwork.quaternion.setFromRotationMatrix(placementMatrix);
@@ -1812,11 +1869,14 @@
 
                     if (Math.abs(dx) > 2 || Math.abs(dy) > 2) touchState.moved = true;
 
-                    // Convert screen pixels to world units at the artwork's depth
-                    const depth = Math.abs(currentArtwork.position.z);
+                    // Convert screen pixels to world units at the artwork's depth,
+                    // moving in the camera's view plane (which follows the gyro)
+                    const depth = currentArtwork.position.length() || 2;
                     const worldPerPixel = (2 * depth * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / window.innerHeight;
-                    currentArtwork.position.x += dx * worldPerPixel;
-                    currentArtwork.position.y -= dy * worldPerPixel;
+                    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+                    const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+                    currentArtwork.position.addScaledVector(right, dx * worldPerPixel);
+                    currentArtwork.position.addScaledVector(up, -dy * worldPerPixel);
                 } else if (touchState.mode === 'pinch' && e.touches.length === 2 && currentArtwork) {
                     touchState.moved = true;
                     const ratio = touchDistance(e.touches) / touchState.startDist;
