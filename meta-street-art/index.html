@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <title>SprayPath · BCVR Immersive</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    :root {
+      --bg: #0b0b0f;
+      --panel: #16161d;
+      --line: #2a2a35;
+      --text: #f4f4f7;
+      --muted: #9a9aa8;
+      --accent: #ff3d7f;
+      --accent-2: #3dd6ff;
+      --ok: #4dff9a;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; }
+    .hidden { display: none !important; }
+
+    /* ---------- Home ---------- */
+    #home { max-width: 720px; margin: 0 auto; padding: calc(16px + env(safe-area-inset-top)) 16px 40px; }
+    header h1 { font-size: 30px; letter-spacing: -0.5px; }
+    header h1 span { color: var(--accent); }
+    .brand { font-size: 11px; font-weight: 800; letter-spacing: 3px; color: var(--accent-2); margin-bottom: 4px; }
+    .credit { color: var(--text); }
+    .ar-card {
+      display: block; margin-top: 18px; padding: 16px; border-radius: 16px; text-decoration: none; color: var(--text);
+      background: linear-gradient(135deg, rgba(61,214,255,.22), rgba(255,61,127,.18)); border: 1px solid var(--accent-2);
+    }
+    .ar-card b { display: block; font-size: 17px; }
+    .ar-card small { color: var(--muted); }
+    header p { color: var(--muted); margin-top: 4px; }
+    .settings { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+    .chip {
+      padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line);
+      background: var(--panel); font-size: 14px;
+    }
+    .chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+    #status-line { font-size: 13px; color: var(--muted); min-height: 18px; }
+    h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--muted); margin: 22px 0 10px; }
+    .dark-tiles { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9); }
+    #map { height: 260px; border-radius: 16px; border: 1px solid var(--line); background: #111; }
+    .tours { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+    .tour {
+      text-align: left; padding: 16px; border-radius: 16px;
+      background: linear-gradient(135deg, rgba(255,61,127,.18), rgba(61,214,255,.12));
+      border: 1px solid var(--line);
+    }
+    .tour b { display: block; font-size: 17px; }
+    .tour small { color: var(--muted); }
+    .spot {
+      display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+      padding: 14px; border-radius: 14px; background: var(--panel);
+      border: 1px solid var(--line); margin-bottom: 8px;
+    }
+    .spot .meta { flex: 1; min-width: 0; }
+    .spot b { display: block; }
+    .spot small { color: var(--muted); }
+    .spot .dist { color: var(--accent-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .note { color: var(--muted); font-size: 13px; line-height: 1.5; margin-top: 24px; }
+
+    /* ---------- Navigation (glasses HUD) ---------- */
+    /* Pure black = transparent on see-through glasses displays, so the HUD
+       keeps the background black and draws only bright, bold elements. */
+    #nav {
+      position: fixed; inset: 0; background: #000; color: #fff;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: calc(12px + env(safe-area-inset-top)) 16px calc(12px + env(safe-area-inset-bottom));
+      text-align: center; user-select: none;
+    }
+    #hud { width: min(92vw, 92vh, 600px); display: flex; flex-direction: column; align-items: center; gap: 2vmin; }
+    #hud-target { font-size: clamp(16px, 4.2vmin, 28px); color: var(--accent); font-weight: 700; }
+    #hud-arrow-wrap { width: 42vmin; height: 42vmin; max-width: 280px; max-height: 280px; position: relative; }
+    #hud-arrow { width: 100%; height: 100%; transition: transform .25s ease-out; }
+    #hud-dist { font-size: clamp(36px, 11vmin, 80px); font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }
+    #hud-instr { font-size: clamp(18px, 5vmin, 34px); font-weight: 600; line-height: 1.2; min-height: 2.4em; }
+    #hud-sub { font-size: clamp(13px, 3.4vmin, 20px); color: #aaa; }
+    #hud-arrive { display: none; }
+    #nav.arrived #hud-arrive { display: block; }
+    #nav.arrived #hud-arrow-wrap, #nav.arrived #hud-dist { display: none; }
+    #hud-arrive .big { font-size: clamp(28px, 8vmin, 56px); font-weight: 800; color: var(--ok); }
+    #hud-arrive p { font-size: clamp(14px, 3.6vmin, 22px); line-height: 1.4; color: #ddd; margin-top: 1.5vmin; max-width: 560px; }
+    .nav-bar {
+      position: absolute; left: 0; right: 0; bottom: calc(12px + env(safe-area-inset-bottom));
+      display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; padding: 0 12px;
+    }
+    .nav-bar button {
+      padding: 12px 18px; border-radius: 999px; border: 1px solid #333; background: #111; font-size: 15px;
+    }
+    .nav-bar button.primary { background: var(--accent); border-color: var(--accent); color: #000; font-weight: 700; }
+    /* Glasses mode hides the phone controls; tap anywhere to bring them back. */
+    #nav.glasses .nav-bar { display: none; }
+    #nav.glasses.show-controls .nav-bar { display: flex; }
+    #mic-dot { position: absolute; top: calc(14px + env(safe-area-inset-top)); right: 16px; width: 10px; height: 10px; border-radius: 50%; background: #333; }
+    #mic-dot.on { background: var(--ok); box-shadow: 0 0 10px var(--ok); }
+    #gps-acc { position: absolute; top: calc(10px + env(safe-area-inset-top)); left: 16px; font-size: 12px; color: #666; }
+  </style>
+</head>
+<body>
+
+<!-- ================= HOME ================= -->
+<main id="home">
+  <header>
+    <div class="brand">BCVR IMMERSIVE</div>
+    <h1>Spray<span>Path</span></h1>
+    <p>Hands-free walking directions to London street art, through your Meta glasses.</p>
+  </header>
+
+  <div class="settings">
+    <button class="chip" id="opt-voice" aria-pressed="true">🔊 Voice guidance</button>
+    <button class="chip" id="opt-listen" aria-pressed="false">🎙️ Voice commands</button>
+    <button class="chip" id="opt-glasses" aria-pressed="false">🕶️ Glasses display view</button>
+    <button class="chip" id="opt-demo" aria-pressed="false">🧪 Demo walk</button>
+  </div>
+  <div id="status-line">Finding your location…</div>
+
+  <a class="ar-card" id="ar-link" href="ar.html">
+    <b>📷 Live AR directions</b>
+    <small>Follow 3D arrows on the street through your phone camera</small>
+  </a>
+
+  <h2>Walking tours</h2>
+  <div class="tours" id="tours"></div>
+
+  <h2>Map</h2>
+  <div id="map"></div>
+
+  <h2>All spots</h2>
+  <div id="spots"></div>
+
+  <p class="note">
+    <b>Using it with Meta glasses:</b> pair your glasses with your phone as usual, open this page,
+    pick a spot or tour, then put your phone in your pocket. Turn-by-turn directions and the story
+    behind each piece play through the glasses' speakers. Turn on <i>Voice commands</i> and say
+    "next", "repeat", "how far" or "what is this". If your glasses have a display, turn on
+    <i>Glasses display view</i> for a minimal black heads-up view.<br><br>
+    Street art changes all the time, so a piece may have been painted over. Watch for traffic and
+    stay aware of your surroundings. Routes © OpenStreetMap contributors (FOSSGIS routing).
+    <br><br><span class="credit">SprayPath is a BCVR Immersive experience.</span>
+  </p>
+</main>
+
+<!-- ================= NAVIGATION HUD ================= -->
+<section id="nav" class="hidden">
+  <div id="gps-acc"></div>
+  <div id="mic-dot" title="Voice commands"></div>
+  <div id="hud">
+    <div id="hud-target"></div>
+    <div id="hud-arrow-wrap">
+      <svg id="hud-arrow" viewBox="0 0 100 100" aria-hidden="true">
+        <path d="M50 6 L84 80 L50 64 L16 80 Z" fill="#fff"/>
+      </svg>
+    </div>
+    <div id="hud-dist">–</div>
+    <div id="hud-instr">Getting your location…</div>
+    <div id="hud-sub"></div>
+    <div id="hud-arrive">
+      <div class="big">You've arrived</div>
+      <p id="hud-story"></p>
+    </div>
+  </div>
+  <div class="nav-bar">
+    <button id="btn-repeat">Repeat</button>
+    <button id="btn-skip">Skip stop</button>
+    <button id="btn-next" class="primary hidden">Next stop →</button>
+    <button id="btn-stop">End</button>
+  </div>
+</section>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="spots.js"></script>
+<script src="nav-core.js"></script>
+<script>
+(() => {
+  'use strict';
+
+  // ---------- Settings (per-device, best effort) ----------
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem('msa.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+    set(k, v) { try { localStorage.setItem('msa.' + k, JSON.stringify(v)); } catch {} },
+  };
+  const params = new URLSearchParams(location.search);
+  const opts = {
+    voice: store.get('voice', true),
+    listen: store.get('listen', false),
+    glasses: params.has('hud') || store.get('glasses', false),
+    demo: params.has('demo') || store.get('demo', false),
+  };
+
+  const $ = (id) => document.getElementById(id);
+  const spotById = Object.fromEntries(SPOTS.map((s) => [s.id, s]));
+
+  const { dist, bearing, distToSeg, ll, lc, compassWord, fmtDist, sayDist, fmtMins, fetchRoute, stepText, MOD_ANGLE, remainingOnRoute, buzz } = MSA;
+
+  // ---------- Speech out (plays through the glasses when paired) ----------
+  // Pause listening while talking so we don't hear ourselves.
+  const speaker = MSA.createSpeaker({ enabled: () => opts.voice, onStart: () => pauseListening(true), onEnd: () => pauseListening(false) });
+  const say = (t, o) => speaker.say(t, o);
+
+  // ---------- Voice commands (glasses mic works as a Bluetooth headset) ----------
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let rec = null, recPaused = false, recRunning = false;
+  function startListening() {
+    if (!SR || !opts.listen || rec) return;
+    rec = new SR();
+    rec.lang = 'en-GB';
+    rec.continuous = true;
+    rec.interimResults = false;
+    rec.onresult = (e) => {
+      const r = e.results[e.results.length - 1];
+      if (r.isFinal) handleCommand(r[0].transcript.toLowerCase());
+    };
+    rec.onstart = () => { recRunning = true; $('mic-dot').classList.add('on'); };
+    rec.onend = () => {
+      recRunning = false; $('mic-dot').classList.remove('on');
+      if (rec && opts.listen && !recPaused && nav.active) setTimeout(() => { try { rec && rec.start(); } catch {} }, 300);
+    };
+    rec.onerror = (e) => { if (e.error === 'not-allowed') { opts.listen = false; store.set('listen', false); syncChips(); stopListening(); } };
+    try { rec.start(); } catch {}
+  }
+  function stopListening() { if (rec) { const r = rec; rec = null; try { r.stop(); } catch {} } $('mic-dot').classList.remove('on'); }
+  function pauseListening(p) {
+    recPaused = p;
+    if (!rec) return;
+    if (p && recRunning) { try { rec.stop(); } catch {} }
+    else if (!p && !recRunning && nav.active) { try { rec.start(); } catch {} }
+  }
+  function handleCommand(t) {
+    if (/\b(next|continue|go on)\b/.test(t)) return nextStop();
+    if (/\b(skip)\b/.test(t)) return nextStop(true);
+    if (/\b(repeat|again|say that)\b/.test(t)) return speaker.repeat();
+    if (/\b(how far|distance|how long)\b/.test(t)) return sayProgress();
+    if (/\b(what is|what's|tell me|story|about)\b/.test(t)) { const s = currentSpot(); return s && say(s.blurb, { interrupt: true }); }
+    if (/\b(where am i|which way|direction)\b/.test(t)) return sayDirection();
+    if (/\b(stop|end|finish|quit)\b/.test(t)) return endNav();
+  }
+
+  // ---------- Heading (phone compass, GPS course, or demo) ----------
+  const compass = MSA.createCompass();
+  const enableCompass = () => compass.enable();
+
+  // ---------- Position source: real GPS or simulated walk ----------
+  let pos = null;            // {lat, lng, acc, heading}
+  let watchId = null;
+  const listeners = new Set();
+  function emit(p) { pos = p; listeners.forEach((f) => f(p)); }
+
+  function startGPS() {
+    if (!('geolocation' in navigator)) { $('status-line').textContent = 'Location is not available on this device. Try Demo walk.'; return; }
+    watchId = navigator.geolocation.watchPosition(
+      (g) => emit({
+        lat: g.coords.latitude, lng: g.coords.longitude, acc: g.coords.accuracy,
+        heading: g.coords.speed > 0.6 && Number.isFinite(g.coords.heading) ? g.coords.heading : null,
+      }),
+      (err) => { $('status-line').textContent = `Location unavailable (${err.message}). Try Demo walk.`; },
+      { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 }
+    );
+  }
+  function stopGPS() { if (watchId !== null) navigator.geolocation.clearWatch(watchId); watchId = null; }
+
+  const sim = { timer: null, path: [], i: 0, speed: 1.4 * 6 }; // metres/sec, sped up
+  function simStart(start) {
+    clearInterval(sim.timer);
+    emit({ lat: start.lat, lng: start.lng, acc: 5, heading: null });
+    sim.timer = setInterval(simTick, 1000);
+  }
+  function simFollow(coords) { sim.path = coords.map(([lng, lat]) => ({ lat, lng })); sim.i = 0; }
+  function simTick() {
+    if (!pos || sim.i >= sim.path.length) return;
+    let left = sim.speed, cur = { lat: pos.lat, lng: pos.lng }, h = pos.heading;
+    while (left > 0 && sim.i < sim.path.length) {
+      const tgt = sim.path[sim.i], d = dist(cur, tgt);
+      if (d <= left) { left -= d; cur = tgt; sim.i++; continue; }
+      h = bearing(cur, tgt);
+      const f = left / d;
+      cur = { lat: cur.lat + (tgt.lat - cur.lat) * f, lng: cur.lng + (tgt.lng - cur.lng) * f };
+      left = 0;
+    }
+    emit({ lat: cur.lat, lng: cur.lng, acc: 5, heading: h });
+  }
+  function simStop() { clearInterval(sim.timer); sim.timer = null; sim.path = []; }
+
+  // ---------- Navigation state ----------
+  const nav = {
+    active: false, queue: [], idx: 0, route: null, step: 1,
+    announced: {}, arrived: false, rerouteAt: 0, offCount: 0, routing: false, lastProgressAt: 0,
+  };
+  const currentSpot = () => spotById[nav.queue[nav.idx]];
+  let wakeLock = null;
+
+  async function startNav(spotIds) {
+    nav.active = true; nav.queue = spotIds; nav.idx = 0;
+    $('home').classList.add('hidden');
+    $('nav').classList.remove('hidden');
+    $('nav').classList.toggle('glasses', opts.glasses);
+    enableCompass();
+    try { wakeLock = await navigator.wakeLock?.request('screen'); } catch {}
+    if (opts.listen) startListening();
+    if (opts.demo) {
+      const first = spotById[spotIds[0]];
+      const start = DEMO_STARTS.reduce((a, b) => (dist(b, first) < dist(a, first) ? b : a));
+      simStart(start);
+    }
+    say(spotIds.length > 1 ? `Starting a ${spotIds.length} stop street art walk.` : `Let's go to ${spotById[spotIds[0]].name}.`, { interrupt: true });
+    beginLeg();
+  }
+
+  async function beginLeg() {
+    const spot = currentSpot();
+    nav.route = null; nav.step = 1; nav.announced = {}; nav.arrived = false; nav.offCount = 0; nav.lastProgressAt = Date.now();
+    $('nav').classList.remove('arrived');
+    $('btn-next').classList.add('hidden');
+    $('hud-target').textContent = (nav.queue.length > 1 ? `${nav.idx + 1}/${nav.queue.length} · ` : '') + spot.name;
+    $('hud-instr').textContent = pos ? 'Finding a walking route…' : 'Getting your location…';
+    if (pos) await reroute(true);
+  }
+
+  async function reroute(first) {
+    if (nav.routing || !pos) return;
+    nav.routing = true; nav.rerouteAt = Date.now();
+    const spot = currentSpot();
+    try {
+      const route = await fetchRoute(pos, spot);
+      if (!nav.active || currentSpot() !== spot) return;
+      nav.route = route; nav.step = 1; nav.announced = {}; nav.offCount = 0;
+      if (opts.demo) simFollow(route.geometry.coordinates);
+      const s0 = route.legs[0].steps[0];
+      if (first) say(`${spot.name} is ${sayDist(route.distance)} away, about ${fmtMins(route.distance).replace(' walk', 'utes')}. ${stepText(s0)}.`);
+      else say(`Rerouting. ${stepText(s0)}.`);
+    } catch {
+      // No route service: fall back to straight-line guidance.
+      nav.route = null;
+      if (opts.demo) simFollow([[spot.lng, spot.lat]]);
+      if (first) say(`${spot.name} is ${sayDist(dist(pos, spot))} away, to the ${compassWord(bearing(pos, spot))}.`);
+    } finally { nav.routing = false; update(); }
+  }
+
+  function onPosition() {
+    if (!nav.active) { renderSpotList(); return; }
+    if (!nav.route && !nav.routing && !nav.rerouteAt) reroute(true);
+    update();
+  }
+  listeners.add(onPosition);
+
+  function update() {
+    if (!nav.active || !pos || nav.arrived) return;
+    const spot = currentSpot();
+    const toSpot = dist(pos, spot);
+    $('gps-acc').textContent = opts.demo ? 'DEMO' : `GPS ±${Math.round(pos.acc)} m`;
+
+    // Arrival
+    if (toSpot < 25) return arrive(spot);
+
+    let target = spot, instr, remaining = toSpot, mod = null;
+    const steps = nav.route?.legs[0].steps;
+    if (steps) {
+      // Advance past maneuvers we've reached.
+      while (nav.step < steps.length - 1 && dist(pos, ll(steps[nav.step].maneuver.location)) < 15) nav.step++;
+      const s = steps[nav.step];
+      target = ll(s.maneuver.location);
+      const dNext = dist(pos, target);
+      remaining = remainingOnRoute(pos, steps, nav.step);
+      instr = stepText(s);
+      mod = s.maneuver.type === 'arrive' ? null : (s.maneuver.modifier || 'straight');
+      $('hud-instr').textContent = `${instr}`;
+      $('hud-sub').textContent = `in ${fmtDist(dNext)} · ${fmtDist(remaining)} total · ${fmtMins(remaining)}`;
+
+      // Spoken prompts: once ahead of the turn, once at the turn.
+      const key = nav.step;
+      if (dNext > 60 && !nav.announced[key + 'far'] && s.maneuver.type !== 'arrive') {
+        nav.announced[key + 'far'] = true;
+        if (steps[nav.step - 1].distance > 120) say(`In ${sayDist(dNext)}, ${lc(instr)}.`);
+      }
+      if (dNext <= 30 && !nav.announced[key + 'now']) {
+        nav.announced[key + 'now'] = true; nav.announced[key + 'far'] = true;
+        say(s.maneuver.type === 'arrive' ? `${spot.name} is just ahead.` : `${instr} now.`);
+        buzz([80, 60, 80]);
+      }
+
+      // Off-route detection → reroute.
+      const coords = nav.route.geometry.coordinates;
+      let off = Infinity;
+      for (let i = 1; i < coords.length; i++) off = Math.min(off, distToSeg(pos, ll(coords[i - 1]), ll(coords[i])));
+      nav.offCount = off > 40 && pos.acc < 35 ? nav.offCount + 1 : 0;
+      if (nav.offCount >= 3 && Date.now() - nav.rerouteAt > 20000) reroute(false);
+    } else {
+      instr = `Head ${compassWord(bearing(pos, spot))}`;
+      $('hud-instr').textContent = instr;
+      $('hud-sub').textContent = `straight-line distance · ${fmtMins(toSpot * 1.3)}`;
+    }
+    $('hud-dist').textContent = fmtDist(steps ? dist(pos, target) : toSpot);
+
+    // Arrow: true direction if we know which way the user faces, otherwise the turn shape.
+    const heading = pos.heading ?? compass.get();
+    let rot = 0;
+    if (heading != null) rot = bearing(pos, target) - heading;
+    else if (mod) rot = MOD_ANGLE[mod] ?? 0;
+    $('hud-arrow').style.transform = `rotate(${((rot % 360) + 540) % 360 - 180}deg)`;
+
+    // Gentle progress update on long straight stretches.
+    if (Date.now() - nav.lastProgressAt > 180000) { nav.lastProgressAt = Date.now(); if (remaining > 300) sayProgress(true); }
+  }
+
+  function sayProgress(quiet) {
+    if (!pos) return say('Still looking for your location.');
+    const spot = currentSpot(), steps = nav.route?.legs[0].steps;
+    const rem = steps ? remainingOnRoute(pos, steps, nav.step) : dist(pos, spot);
+    say(`${spot.name} is ${sayDist(rem)} away.`, { interrupt: !quiet });
+  }
+  function sayDirection() {
+    if (!pos) return;
+    const steps = nav.route?.legs[0].steps;
+    if (steps) say(`${stepText(steps[nav.step])} in ${sayDist(dist(pos, ll(steps[nav.step].maneuver.location)))}.`, { interrupt: true });
+    else say(`Head ${compassWord(bearing(pos, currentSpot()))}.`, { interrupt: true });
+  }
+
+  function arrive(spot) {
+    nav.arrived = true;
+    $('nav').classList.add('arrived');
+    $('hud-instr').textContent = spot.name;
+    $('hud-sub').textContent = spot.area;
+    $('hud-story').textContent = spot.blurb;
+    buzz([200, 100, 200]);
+    const more = nav.idx < nav.queue.length - 1;
+    $('btn-next').classList.toggle('hidden', !more);
+    say(spot.blurb, { interrupt: true });
+    if (more) say(`When you're ready, say "next", or tap Next stop, to head to ${spotById[nav.queue[nav.idx + 1]].name}.`);
+    else say(nav.queue.length > 1 ? "That's the end of the walk. Thanks for exploring London's street art." : 'Enjoy the art.');
+    if (opts.demo) sim.path = [];
+  }
+
+  function nextStop(skip) {
+    if (!nav.active) return;
+    if (nav.idx >= nav.queue.length - 1) { if (skip) say('That was the last stop.'); return; }
+    nav.idx++;
+    nav.rerouteAt = 0;
+    say(`Next stop: ${currentSpot().name}.`, { interrupt: true });
+    beginLeg();
+  }
+
+  function endNav() {
+    nav.active = false; nav.route = null; nav.rerouteAt = 0;
+    simStop(); stopListening();
+    speaker.cancel();
+    try { wakeLock && wakeLock.release(); } catch {}
+    wakeLock = null;
+    $('nav').classList.add('hidden');
+    $('home').classList.remove('hidden');
+    if (opts.demo) pos = null;
+    renderSpotList();
+    map && setTimeout(() => map.invalidateSize(), 50);
+  }
+
+  $('btn-repeat').onclick = () => (nav.arrived ? say(currentSpot().blurb, { interrupt: true }) : sayDirection());
+  $('btn-skip').onclick = () => nextStop(true);
+  $('btn-next').onclick = () => nextStop();
+  $('btn-stop').onclick = endNav;
+  $('nav').addEventListener('click', (e) => {
+    if (!opts.glasses || e.target.closest('.nav-bar')) return;
+    $('nav').classList.toggle('show-controls');
+  });
+
+  // ---------- Home screen ----------
+  function syncChips() {
+    $('opt-voice').setAttribute('aria-pressed', opts.voice);
+    $('opt-listen').setAttribute('aria-pressed', opts.listen);
+    $('opt-glasses').setAttribute('aria-pressed', opts.glasses);
+    $('opt-demo').setAttribute('aria-pressed', opts.demo);
+    if (!SR) { $('opt-listen').disabled = true; $('opt-listen').title = 'Voice commands need Chrome or Safari'; }
+  }
+  const toggle = (k) => () => {
+    opts[k] = !opts[k]; store.set(k, opts[k]); syncChips();
+    if (k === 'demo') { opts.demo ? (stopGPS(), pos = null, $('status-line').textContent = 'Demo walk: pick a tour to watch a simulated walk.') : startGPS(); renderSpotList(); }
+    if (k === 'voice' && opts.voice) say('Voice guidance on.', { interrupt: true });
+  };
+  $('opt-voice').onclick = toggle('voice');
+  $('opt-listen').onclick = toggle('listen');
+  $('opt-glasses').onclick = toggle('glasses');
+  $('opt-demo').onclick = toggle('demo');
+
+  function renderTours() {
+    $('tours').innerHTML = '';
+    for (const t of TOURS) {
+      const b = document.createElement('button');
+      b.className = 'tour';
+      b.innerHTML = `<b></b><small></small>`;
+      b.querySelector('b').textContent = t.name;
+      b.querySelector('small').textContent = `${t.stops.length} stops · ${t.desc}`;
+      b.onclick = () => startNav(t.stops);
+      $('tours').appendChild(b);
+    }
+  }
+
+  function renderSpotList() {
+    const list = SPOTS.map((s) => ({ s, d: pos && !opts.demo ? dist(pos, s) : null }));
+    if (list[0].d !== null) list.sort((a, b) => a.d - b.d);
+    if (pos && !opts.demo) $('status-line').textContent = `Location found (±${Math.round(pos.acc)} m). Nearest: ${list[0].s.name}.`;
+    const box = $('spots');
+    box.innerHTML = '';
+    for (const { s, d } of list) {
+      const b = document.createElement('button');
+      b.className = 'spot';
+      b.innerHTML = `<div class="meta"><b></b><small></small></div><span class="dist"></span>`;
+      b.querySelector('b').textContent = s.name;
+      b.querySelector('small').textContent = `${s.area} · ${s.tags.join(', ')}`;
+      b.querySelector('.dist').textContent = d === null ? '→' : fmtDist(d);
+      b.onclick = () => startNav([s.id]);
+      box.appendChild(b);
+    }
+    if (map && pos && !opts.demo) {
+      if (!youMarker) youMarker = L.circleMarker([pos.lat, pos.lng], { radius: 7, color: '#3dd6ff', fillOpacity: 1 }).addTo(map);
+      else youMarker.setLatLng([pos.lat, pos.lng]);
+    }
+  }
+
+  let map = null, youMarker = null;
+  function initMap() {
+    if (typeof L === 'undefined') { $('map').classList.add('hidden'); return; }
+    map = L.map('map', { zoomControl: false, attributionControl: true }).setView([51.515, -0.095], 12);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '© OpenStreetMap contributors', className: 'dark-tiles',
+    }).addTo(map);
+    for (const s of SPOTS) {
+      L.circleMarker([s.lat, s.lng], { radius: 8, color: '#ff3d7f', fillColor: '#ff3d7f', fillOpacity: 0.85 })
+        .addTo(map)
+        .bindPopup(`<b>${s.name}</b><br>${s.area}<br><a href="#" data-go="${s.id}">Take me there →</a>`);
+    }
+    map.on('popupopen', (e) => {
+      const a = e.popup.getElement().querySelector('[data-go]');
+      if (a) a.onclick = (ev) => { ev.preventDefault(); map.closePopup(); startNav([a.dataset.go]); };
+    });
+  }
+
+  // Re-acquire wake lock when returning to the page mid-walk.
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'visible' && nav.active && !wakeLock) {
+      try { wakeLock = await navigator.wakeLock?.request('screen'); } catch {}
+    }
+  });
+
+  const syncArLink = () => { $('ar-link').href = opts.demo ? 'ar.html?demo=1' : 'ar.html'; };
+  $('opt-demo').addEventListener('click', syncArLink);
+  syncArLink();
+  syncChips();
+  renderTours();
+  initMap();
+  renderSpotList();
+  if (opts.demo) $('status-line').textContent = 'Demo walk: pick a tour to watch a simulated walk.';
+  else startGPS();
+
+  if (params.get('tour')) { const t = TOURS.find((x) => x.id === params.get('tour')); if (t) startNav(t.stops); }
+  if (params.get('spot') && spotById[params.get('spot')]) startNav([params.get('spot')]);
+})();
+</script>
+</body>
+</html>

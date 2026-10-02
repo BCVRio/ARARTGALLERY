@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <title>SprayPath AR · BCVR Immersive</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <style>
+    :root { --accent: #ff3d7f; --accent-2: #3dd6ff; --ok: #4dff9a; --muted: #b8b8c4; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; background: #000; color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
+    button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; }
+    .hidden { display: none !important; }
+    canvas#ar { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; touch-action: none; }
+
+    /* Start / picker */
+    #start { position: fixed; inset: 0; z-index: 20; overflow-y: auto; background: radial-gradient(circle at 20% 0%, #3a0d22, #000 60%);
+      padding: calc(20px + env(safe-area-inset-top)) 16px 32px; }
+    #start .wrap { max-width: 560px; margin: 0 auto; }
+    #start h1 { font-size: 28px; }
+    #start h1 span { color: var(--accent); }
+    #start p { color: var(--muted); margin: 6px 0 18px; line-height: 1.45; }
+    #start h2 { font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); margin: 18px 0 8px; }
+    .pick { display: block; width: 100%; text-align: left; padding: 14px; margin-bottom: 8px; border-radius: 14px;
+      background: #15151c; border: 1px solid #2a2a35; }
+    .pick[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+    .pick small { display: block; color: var(--muted); margin-top: 2px; }
+    #go { position: sticky; bottom: 0; width: 100%; margin-top: 16px; padding: 16px; border-radius: 16px;
+      background: var(--accent); color: #000; font-weight: 800; font-size: 18px; }
+    #go:disabled { opacity: .4; }
+    .row { display: flex; gap: 8px; align-items: center; margin-top: 12px; color: var(--muted); font-size: 14px; }
+    a { color: var(--accent-2); }
+    .brand { font-size: 11px; font-weight: 800; letter-spacing: 3px; color: var(--accent-2); }
+    .credit { font-size: 12px; text-align: center; margin-top: 20px !important; }
+
+    /* AR overlay */
+    #hud { position: fixed; inset: 0; z-index: 10; pointer-events: none; }
+    #top { position: absolute; top: calc(12px + env(safe-area-inset-top)); left: 12px; right: 12px;
+      display: flex; gap: 8px; align-items: center; }
+    #target { flex: 1; padding: 10px 14px; border-radius: 14px; background: rgba(0,0,0,.55); backdrop-filter: blur(8px);
+      font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #target small { display: block; font-weight: 500; color: var(--muted); font-size: 12px; }
+    .round { pointer-events: auto; width: 44px; height: 44px; border-radius: 50%; background: rgba(0,0,0,.55); backdrop-filter: blur(8px); font-size: 18px; }
+    #card { position: absolute; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom));
+      padding: 16px; border-radius: 20px; background: rgba(0,0,0,.66); backdrop-filter: blur(10px); pointer-events: auto; }
+    #instr { font-size: 22px; font-weight: 700; line-height: 1.2; }
+    #sub { color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
+    #story { margin-top: 10px; line-height: 1.45; color: #e6e6ee; max-height: 34vh; overflow-y: auto; }
+    .btns { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+    .btns button { padding: 10px 14px; border-radius: 999px; background: #222; border: 1px solid #333; font-size: 14px; }
+    .btns button.primary { background: var(--accent); border-color: var(--accent); color: #000; font-weight: 700; }
+    #hint { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); padding: 8px 14px; border-radius: 999px;
+      background: rgba(0,0,0,.6); font-size: 14px; color: var(--muted); white-space: nowrap; }
+    #compass-warn { color: #ffcc66; }
+  </style>
+</head>
+<body>
+
+<!-- Picker -->
+<section id="start">
+  <div class="wrap">
+    <div class="brand">BCVR IMMERSIVE</div>
+    <h1>Spray<span>Path</span> AR</h1>
+    <p>Live AR directions to London street art. Hold your phone up and follow the arrows
+       on the pavement to each piece.</p>
+    <h2>Walking tours</h2>
+    <div id="pick-tours"></div>
+    <h2>Single spots</h2>
+    <div id="pick-spots"></div>
+    <label class="row"><input type="checkbox" id="demo"> Demo walk (simulated GPS, for testing away from London)</label>
+    <div class="row"><a href="./">← Back to glasses mode</a></div>
+    <p class="credit">A BCVR Immersive experience · AR powered by Zappar</p>
+    <button id="go" disabled>Start AR</button>
+  </div>
+</section>
+
+<canvas id="ar"></canvas>
+
+<!-- HUD -->
+<section id="hud" class="hidden">
+  <div id="top">
+    <div id="target">–<small></small></div>
+    <button class="round" id="btn-mute" title="Voice on/off">🔊</button>
+    <button class="round" id="btn-exit" title="Exit">✕</button>
+  </div>
+  <div id="hint">Getting your location…</div>
+  <div id="card">
+    <div id="instr">Getting your location…</div>
+    <div id="sub"></div>
+    <div id="story" class="hidden"></div>
+    <div class="btns">
+      <button id="btn-repeat">Repeat</button>
+      <button id="btn-skip">Skip stop</button>
+      <button id="btn-next" class="primary hidden">Next stop →</button>
+    </div>
+  </div>
+</section>
+
+<script src="https://unpkg.com/three@0.159.0/build/three.min.js"></script>
+<script src="https://libs.zappar.com/zappar-threejs/4.3.0/zappar-threejs.js"></script>
+<script src="spots.js"></script>
+<script src="nav-core.js"></script>
+<script>
+(() => {
+  'use strict';
+  const { dist, bearing, distToSeg, ll, normAngle, compassWord, fmtDist, sayDist, walkMins, fmtMins, lc,
+          fetchRoute, stepText, remainingOnRoute, buzz } = MSA;
+  const $ = (id) => document.getElementById(id);
+  const spotById = Object.fromEntries(SPOTS.map((s) => [s.id, s]));
+  const params = new URLSearchParams(location.search);
+
+  // ---------- Picker ----------
+  let choice = null;
+  $('demo').checked = params.has('demo');
+  function addPick(box, title, sub, ids) {
+    const b = document.createElement('button');
+    b.className = 'pick';
+    b.innerHTML = '<b></b><small></small>';
+    b.querySelector('b').textContent = title;
+    b.querySelector('small').textContent = sub;
+    b.onclick = () => {
+      document.querySelectorAll('.pick').forEach((x) => x.setAttribute('aria-pressed', 'false'));
+      b.setAttribute('aria-pressed', 'true');
+      choice = ids; $('go').disabled = false;
+    };
+    $(box).appendChild(b);
+    return b;
+  }
+  for (const t of TOURS) addPick('pick-tours', t.name, `${t.stops.length} stops · ${t.desc}`, t.stops);
+  for (const s of SPOTS) addPick('pick-spots', s.name, s.area, [s.id]);
+  const pre = params.get('tour') ? TOURS.find((t) => t.id === params.get('tour'))?.stops
+            : spotById[params.get('spot')] ? [params.get('spot')] : null;
+  if (pre) { choice = pre; $('go').disabled = false; $('go').textContent = `Start AR · ${pre.length > 1 ? 'tour' : spotById[pre[0]].name}`; }
+
+  // ---------- Speech & compass ----------
+  let voiceOn = true;
+  const speaker = MSA.createSpeaker({ enabled: () => voiceOn });
+  const say = (t, o) => speaker.say(t, o);
+  const compass = MSA.createCompass({ camera: true });
+
+  // ---------- three.js + Zappar ----------
+  let renderer, scene, camera, tracker, anchor, arrowRig, chevrons = [], label, beacon, beaconLabel, celebrate;
+  const ARROW_COLOR = 0xff3d7f, BEACON_COLOR = 0x3dd6ff;
+
+  function textSprite(w = 1024, h = 256) {
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+    spr.renderOrder = 10;
+    let last = '';
+    spr.userData.draw = (line1, line2, color = '#ff3d7f') => {
+      const key = line1 + '|' + line2;
+      if (key === last) return; last = key;
+      const g = c.getContext('2d');
+      g.clearRect(0, 0, w, h);
+      g.fillStyle = 'rgba(0,0,0,0.62)';
+      g.beginPath(); g.roundRect(8, 8, w - 16, h - 16, 48); g.fill();
+      g.fillStyle = color; g.fillRect(8, 40, 14, h - 80);
+      g.fillStyle = '#fff'; g.font = '700 74px -apple-system, Segoe UI, Roboto, sans-serif';
+      g.fillText(fit(g, line1, w - 90), 52, 112);
+      g.fillStyle = '#c9c9d4'; g.font = '500 56px -apple-system, Segoe UI, Roboto, sans-serif';
+      g.fillText(fit(g, line2, w - 90), 52, 194);
+      tex.needsUpdate = true;
+    };
+    return spr;
+  }
+  function fit(g, t, max) { if (g.measureText(t).width <= max) return t; while (t.length > 1 && g.measureText(t + '…').width > max) t = t.slice(0, -1); return t + '…'; }
+
+  function chevronGeometry() {
+    // Flat chevron pointing along -Z, lying on the ground plane.
+    const s = new THREE.Shape();
+    s.moveTo(0, 0.6); s.lineTo(0.55, -0.05); s.lineTo(0.3, -0.05); s.lineTo(0, 0.3);
+    s.lineTo(-0.3, -0.05); s.lineTo(-0.55, -0.05); s.closePath();
+    const geo = new THREE.ExtrudeGeometry(s, { depth: 0.08, bevelEnabled: true, bevelSize: 0.02, bevelThickness: 0.02, bevelSegments: 2 });
+    geo.rotateX(-Math.PI / 2);  // shape +Y → world -Z, extrusion → +Y (up)
+    return geo;
+  }
+
+  function buildScene() {
+    const canvas = $('ar');
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    addEventListener('resize', () => renderer.setSize(innerWidth, innerHeight));
+
+    ZapparThree.glContextSet(renderer.getContext());
+    scene = new THREE.Scene();
+    camera = new ZapparThree.Camera();
+    scene.background = camera.backgroundTexture;
+
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x444466, 2.2));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.4); sun.position.set(2, 5, 3); scene.add(sun);
+
+    // Instant world tracking: we re-anchor a little ahead of the user every frame,
+    // so the guidance travels with them down the street without drifting.
+    tracker = new ZapparThree.InstantWorldTracker();
+    anchor = new ZapparThree.InstantWorldAnchorGroup(camera, tracker);
+    scene.add(anchor);
+
+    // Arrow rig: three chevrons that flow in the walking direction.
+    arrowRig = new THREE.Group();
+    const geo = chevronGeometry();
+    for (let i = 0; i < 3; i++) {
+      const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+        color: ARROW_COLOR, emissive: ARROW_COLOR, emissiveIntensity: 0.55, roughness: 0.35, transparent: true, opacity: 1,
+      }));
+      arrowRig.add(m); chevrons.push(m);
+    }
+    arrowRig.scale.setScalar(0.9);
+    anchor.add(arrowRig);
+
+    label = textSprite();
+    label.scale.set(2, 0.5, 1);
+    label.position.set(0, 1.1, 0);
+    anchor.add(label);
+
+    // Beacon: a light pillar in the true direction of the artwork.
+    beacon = new THREE.Group();
+    const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 6, 20, 1, true),
+      new THREE.MeshBasicMaterial({ color: BEACON_COLOR, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false }));
+    pillar.position.y = 3;
+    const orb = new THREE.Mesh(new THREE.SphereGeometry(0.4, 24, 16), new THREE.MeshBasicMaterial({ color: BEACON_COLOR }));
+    orb.position.y = 6.2;
+    beacon.add(pillar, orb);
+    beaconLabel = textSprite();
+    beaconLabel.scale.set(2.2, 0.55, 1);
+    beaconLabel.position.y = 7.3;
+    beacon.add(beaconLabel);
+    anchor.add(beacon);
+
+    // Arrival celebration: spinning frame + confetti.
+    celebrate = new THREE.Group();
+    const frame = new THREE.Mesh(new THREE.TorusGeometry(1.1, 0.07, 12, 4), new THREE.MeshStandardMaterial({ color: 0xffd23d, emissive: 0xffd23d, emissiveIntensity: 0.6 }));
+    frame.rotation.z = Math.PI / 4; frame.position.y = 1.4;
+    celebrate.add(frame);
+    const confetti = new THREE.Group();
+    const cols = [0xff3d7f, 0x3dd6ff, 0x4dff9a, 0xffd23d, 0xb46bff];
+    for (let i = 0; i < 70; i++) {
+      const p = new THREE.Mesh(new THREE.PlaneGeometry(0.09, 0.16), new THREE.MeshBasicMaterial({ color: cols[i % cols.length], side: THREE.DoubleSide }));
+      p.userData.v = new THREE.Vector3((Math.random() - 0.5) * 0.06, 0.05 + Math.random() * 0.06, (Math.random() - 0.5) * 0.06);
+      p.userData.spin = Math.random() * 0.2;
+      confetti.add(p);
+    }
+    celebrate.add(confetti);
+    celebrate.userData = { frame, confetti };
+    celebrate.visible = false;
+    anchor.add(celebrate);
+  }
+
+  function burstConfetti() {
+    for (const p of celebrate.userData.confetti.children) {
+      p.position.set(0, 1.4, 0);
+      p.userData.v.set((Math.random() - 0.5) * 0.08, 0.04 + Math.random() * 0.07, (Math.random() - 0.5) * 0.08);
+    }
+  }
+
+  // ---------- Per-frame AR update ----------
+  const tmpV = new THREE.Vector3(), tmpO = new THREE.Vector3();
+  let t0 = performance.now(), guide = { relBearing: null, beaconRel: null, beaconDist: Infinity, line1: '', line2: '' };
+
+  // Yaw (about the anchor's up axis) that points local -Z along the camera's view, flattened onto the ground.
+  function cameraYawInAnchor() {
+    camera.getWorldPosition(tmpO);
+    camera.getWorldDirection(tmpV).multiplyScalar(5).add(tmpO);
+    anchor.worldToLocal(tmpV); anchor.worldToLocal(tmpO);
+    const dx = tmpV.x - tmpO.x, dz = tmpV.z - tmpO.z;
+    return Math.atan2(-dx, -dz);
+  }
+
+  function frame() {
+    requestAnimationFrame(frame);
+    camera.updateFrame(renderer);
+    // Keep the guidance ~5 m ahead and a little below eye level.
+    tracker.setAnchorPoseFromCameraOffset(0, -2.2, -5.5);
+    const t = (performance.now() - t0) / 1000;
+
+    const arrived = nav.arrived;
+    const fwd = cameraYawInAnchor();
+    arrowRig.visible = !arrived && guide.relBearing !== null;
+    if (arrowRig.visible) {
+      // Rotate the rig to the walking direction: clockwise bearing → negative three.js yaw.
+      const targetYaw = fwd - guide.relBearing * Math.PI / 180;
+      arrowRig.rotation.y += normRad(targetYaw - arrowRig.rotation.y) * 0.15;
+      chevrons.forEach((m, i) => {
+        const phase = (t * 0.9 + i / 3) % 1;
+        m.position.set(0, 0.05, -phase * 1.6 + 0.6);
+        m.material.opacity = Math.sin(phase * Math.PI);
+      });
+    }
+    label.visible = !arrived && !!guide.line1;
+    if (label.visible) label.userData.draw(guide.line1, guide.line2);
+
+    beacon.visible = !arrived && guide.beaconRel !== null && guide.beaconDist < 600;
+    if (beacon.visible) {
+      const yaw = fwd - guide.beaconRel * Math.PI / 180;
+      const r = 3 + Math.min(1, guide.beaconDist / 300) * 9;   // further away → further out
+      beacon.position.set(-Math.sin(yaw) * r, 0, -Math.cos(yaw) * r);
+      beacon.children[1].position.y = 6.2 + Math.sin(t * 2) * 0.15;
+      beaconLabel.userData.draw(currentSpot().name, fmtDist(guide.beaconDist), '#3dd6ff');
+    }
+
+    celebrate.visible = arrived;
+    if (arrived) {
+      celebrate.userData.frame.rotation.y = t * 1.2;
+      for (const p of celebrate.userData.confetti.children) {
+        p.position.add(p.userData.v); p.userData.v.y -= 0.0025;
+        p.rotation.x += p.userData.spin; p.rotation.y += p.userData.spin;
+        if (p.position.y < -0.5) { p.position.set(0, 1.4, 0); p.userData.v.y = 0.05 + Math.random() * 0.06; }
+      }
+    }
+    renderer.render(scene, camera);
+  }
+  const normRad = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+
+  // ---------- Position: GPS or simulated walk ----------
+  let pos = null, demo = false;
+  const sim = { timer: null, path: [], i: 0, speed: 1.4 * 4 };
+  function emit(p) { pos = p; onPosition(); }
+  function startGPS() {
+    if (!('geolocation' in navigator)) { $('hint').textContent = 'Location not available on this device'; return; }
+    navigator.geolocation.watchPosition(
+      (g) => emit({ lat: g.coords.latitude, lng: g.coords.longitude, acc: g.coords.accuracy,
+        heading: g.coords.speed > 0.6 && Number.isFinite(g.coords.heading) ? g.coords.heading : null }),
+      (err) => { $('hint').classList.remove('hidden'); $('hint').textContent = `Location unavailable: ${err.message}`; },
+      { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
+  }
+  function simStart(start) { emit({ lat: start.lat, lng: start.lng, acc: 5, heading: null }); sim.timer = setInterval(simTick, 1000); }
+  function simFollow(coords) { sim.path = coords.map(ll); sim.i = 0; }
+  function simTick() {
+    if (!pos || sim.i >= sim.path.length) return;
+    let left = sim.speed, cur = { lat: pos.lat, lng: pos.lng }, h = pos.heading;
+    while (left > 0 && sim.i < sim.path.length) {
+      const tgt = sim.path[sim.i], d = dist(cur, tgt);
+      if (d <= left) { left -= d; cur = tgt; sim.i++; continue; }
+      h = bearing(cur, tgt);
+      cur = { lat: cur.lat + (tgt.lat - cur.lat) * left / d, lng: cur.lng + (tgt.lng - cur.lng) * left / d };
+      left = 0;
+    }
+    emit({ lat: cur.lat, lng: cur.lng, acc: 5, heading: h });
+  }
+  // Which way is the camera facing? Prefer the compass (accounts for turning on the spot),
+  // then GPS course while walking.
+  const facing = () => compass.get() ?? pos?.heading ?? null;
+
+  // ---------- Navigation ----------
+  const nav = { queue: [], idx: 0, route: null, step: 1, announced: {}, arrived: false, routing: false, rerouteAt: 0, offCount: 0 };
+  const currentSpot = () => spotById[nav.queue[nav.idx]];
+
+  function beginLeg() {
+    const spot = currentSpot();
+    Object.assign(nav, { route: null, step: 1, announced: {}, arrived: false, offCount: 0, rerouteAt: 0 });
+    $('target').firstChild.textContent = spot.name;
+    $('target').querySelector('small').textContent = (nav.queue.length > 1 ? `Stop ${nav.idx + 1} of ${nav.queue.length} · ` : '') + spot.area;
+    $('story').classList.add('hidden');
+    $('btn-next').classList.add('hidden');
+    $('instr').textContent = pos ? 'Finding a walking route…' : 'Getting your location…';
+    if (pos) reroute(true);
+  }
+
+  async function reroute(first) {
+    if (nav.routing || !pos) return;
+    nav.routing = true; nav.rerouteAt = Date.now();
+    const spot = currentSpot();
+    try {
+      const route = await fetchRoute(pos, spot);
+      if (currentSpot() !== spot) return;
+      Object.assign(nav, { route, step: 1, announced: {}, offCount: 0 });
+      if (demo) simFollow(route.geometry.coordinates);
+      const s0 = route.legs[0].steps[0];
+      say(first ? `${spot.name} is ${sayDist(route.distance)} away, about ${walkMins(route.distance)} minutes. ${stepText(s0)}. Follow the arrows.` : `Rerouting. ${stepText(s0)}.`);
+    } catch {
+      nav.route = null;
+      if (demo) simFollow([[spot.lng, spot.lat]]);
+      if (first) say(`${spot.name} is ${sayDist(dist(pos, spot))} away. Follow the arrow.`);
+    } finally { nav.routing = false; onPosition(); }
+  }
+
+  function onPosition() {
+    if (!pos || !nav.queue.length || nav.arrived) return;
+    if (!nav.route && !nav.routing && !nav.rerouteAt) return reroute(true);
+    const spot = currentSpot();
+    const toSpot = dist(pos, spot);
+    if (toSpot < 25) return arrive(spot);
+
+    const heading = facing();
+    $('hint').classList.toggle('hidden', heading !== null);
+    if (heading === null) $('hint').textContent = 'Point your phone ahead and start walking to calibrate';
+
+    const steps = nav.route?.legs[0].steps;
+    let target = spot, line1, remaining = toSpot;
+    if (steps) {
+      while (nav.step < steps.length - 1 && dist(pos, ll(steps[nav.step].maneuver.location)) < 15) nav.step++;
+      const s = steps[nav.step];
+      target = ll(s.maneuver.location);
+      const dNext = dist(pos, target);
+      remaining = remainingOnRoute(pos, steps, nav.step);
+      line1 = stepText(s);
+      // Point along the route: aim at a spot ~25 m ahead on the line, not straight at the
+      // turn, so the arrow follows bends in the street.
+      target = lookAhead(nav.route.geometry.coordinates, pos, 25) || target;
+      guide.line2 = `in ${fmtDist(dNext)}`;
+      $('instr').textContent = line1;
+      $('sub').textContent = `in ${fmtDist(dNext)} · ${fmtDist(remaining)} to go · ${fmtMins(remaining)}`;
+
+      if (dNext > 60 && !nav.announced[nav.step + 'far'] && s.maneuver.type !== 'arrive' && steps[nav.step - 1].distance > 120) {
+        nav.announced[nav.step + 'far'] = true; say(`In ${sayDist(dNext)}, ${lc(line1)}.`);
+      }
+      if (dNext <= 30 && !nav.announced[nav.step + 'now']) {
+        nav.announced[nav.step + 'now'] = true; nav.announced[nav.step + 'far'] = true;
+        say(s.maneuver.type === 'arrive' ? `${spot.name} is just ahead.` : `${line1} now.`); buzz([80, 60, 80]);
+      }
+      const coords = nav.route.geometry.coordinates;
+      let off = Infinity;
+      for (let i = 1; i < coords.length; i++) off = Math.min(off, distToSeg(pos, ll(coords[i - 1]), ll(coords[i])));
+      nav.offCount = off > 40 && pos.acc < 35 ? nav.offCount + 1 : 0;
+      if (nav.offCount >= 3 && Date.now() - nav.rerouteAt > 20000) reroute(false);
+    } else {
+      line1 = `Head ${compassWord(bearing(pos, spot))}`;
+      guide.line2 = fmtDist(toSpot);
+      $('instr').textContent = line1;
+      $('sub').textContent = `straight line · ${fmtMins(toSpot * 1.3)}`;
+    }
+    guide.line1 = line1;
+    guide.relBearing = heading === null ? null : normAngle(bearing(pos, target) - heading);
+    guide.beaconRel = heading === null ? null : normAngle(bearing(pos, spot) - heading);
+    guide.beaconDist = toSpot;
+  }
+  // The point `ahead` metres further along the route from the closest point to p.
+  function lookAhead(coords, p, ahead) {
+    let best = 0, bestD = Infinity;
+    for (let i = 0; i < coords.length; i++) { const d = dist(p, ll(coords[i])); if (d < bestD) { bestD = d; best = i; } }
+    let acc = 0;
+    for (let i = best + 1; i < coords.length; i++) {
+      acc += dist(ll(coords[i - 1]), ll(coords[i]));
+      if (acc >= ahead) return ll(coords[i]);
+    }
+    return ll(coords[coords.length - 1]);
+  }
+
+  function arrive(spot) {
+    nav.arrived = true;
+    burstConfetti();
+    buzz([200, 100, 200]);
+    $('instr').textContent = `You've arrived: ${spot.name}`;
+    $('sub').textContent = spot.area;
+    $('story').textContent = spot.blurb;
+    $('story').classList.remove('hidden');
+    $('hint').classList.add('hidden');
+    const more = nav.idx < nav.queue.length - 1;
+    $('btn-next').classList.toggle('hidden', !more);
+    say(spot.blurb, { interrupt: true });
+    if (more) say(`Tap next stop when you're ready for ${spotById[nav.queue[nav.idx + 1]].name}.`);
+    if (demo) sim.path = [];
+  }
+  function nextStop(skip) {
+    if (nav.idx >= nav.queue.length - 1) { if (skip) say('That was the last stop.'); return; }
+    nav.idx++;
+    say(`Next stop: ${currentSpot().name}.`, { interrupt: true });
+    beginLeg();
+  }
+
+  $('btn-repeat').onclick = () => (nav.arrived ? say(currentSpot().blurb, { interrupt: true }) : speaker.repeat());
+  $('btn-skip').onclick = () => nextStop(true);
+  $('btn-next').onclick = () => nextStop();
+  $('btn-mute').onclick = () => { voiceOn = !voiceOn; $('btn-mute').textContent = voiceOn ? '🔊' : '🔇'; if (!voiceOn) speaker.cancel(); };
+  $('btn-exit').onclick = () => { speaker.cancel(); location.href = './'; };
+
+  // ---------- Start ----------
+  $('go').onclick = async () => {
+    if (!choice) return;
+    if (ZapparThree.browserIncompatible()) { ZapparThree.browserIncompatibleUI(); return; }
+    demo = $('demo').checked;
+    await compass.enable();                // iOS motion permission needs this tap
+    say(choice.length > 1 ? `Starting a ${choice.length} stop street art walk.` : `Let's go to ${spotById[choice[0]].name}.`, { interrupt: true });
+    buildScene();
+    const granted = await ZapparThree.permissionRequestUI();
+    if (!granted) { ZapparThree.permissionDeniedUI(); return; }
+    camera.start();                        // rear camera
+    $('start').classList.add('hidden');
+    $('hud').classList.remove('hidden');
+    try { await navigator.wakeLock?.request('screen'); } catch {}
+    frame();
+    nav.queue = choice; nav.idx = 0;
+    beginLeg();
+    if (demo) {
+      const first = currentSpot();
+      simStart(DEMO_STARTS.reduce((a, b) => (dist(b, first) < dist(a, first) ? b : a)));
+    } else startGPS();
+  };
+})();
+</script>
+</body>
+</html>
