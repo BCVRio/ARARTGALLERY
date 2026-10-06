@@ -1224,6 +1224,164 @@
         }
 
         #share-sheet { border-top: 1px solid rgba(212, 175, 55, 0.3); }
+
+        /* — HUD v2: minimal AR interface, browser-chrome & safe-area aware — */
+        #canvas-container {
+            position: fixed;
+            inset: 0;
+            width: auto;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        html, body { height: 100%; }
+
+        #canvas-container, #start-screen {
+            height: 100vh;
+            height: 100dvh;
+        }
+
+        /* Start screen: scroll instead of clipping on small phones */
+        #start-screen {
+            justify-content: flex-start;
+            overflow-y: auto;
+            padding: calc(24px + env(safe-area-inset-top, 0px)) 20px calc(24px + env(safe-area-inset-bottom, 0px));
+        }
+        .hero-content { margin-top: 3vh; }
+        .logo-badge { margin-bottom: 16px; padding: 6px 16px; }
+        .hero-title { margin-bottom: 12px; }
+        .gradient-text { font-size: 38px; }
+        .hero-subtitle { font-size: 30px; }
+        .hero-description { font-size: 15px; margin-bottom: 22px; }
+        .hero-cta { margin-bottom: 26px; padding: 16px 32px; font-size: 16px; }
+        .feature-cards { gap: 10px; margin-bottom: 18px; }
+        .feature-card { padding: 12px; }
+        .feature-icon { font-size: 22px; margin-bottom: 4px; }
+        .feature-title { font-size: 13px; }
+        .feature-desc { font-size: 11px; }
+
+        /* Slim top bar of round icon buttons */
+        #top-bar {
+            top: calc(10px + env(safe-area-inset-top, 0px));
+            left: auto;
+            right: 12px;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+        .top-btn { width: 42px; height: 42px; font-size: 17px; border-radius: 50%; }
+
+        /* Search: dropdown, hidden until toggled */
+        #search-panel {
+            position: absolute;
+            top: calc(62px + env(safe-area-inset-top, 0px));
+            left: 12px;
+            right: 12px;
+            transform: translateY(-130%);
+            opacity: 0;
+            pointer-events: none;
+            transition: transform 0.25s ease, opacity 0.25s ease;
+        }
+        #search-panel.open {
+            transform: translateY(0);
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        /* Art strip: hidden until toggled, docks above the pill bar */
+        #art-gallery {
+            bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+            transform: translateY(140%);
+            opacity: 0;
+            pointer-events: none !important;
+            transition: transform 0.25s ease, opacity 0.25s ease;
+        }
+        #art-gallery.open {
+            transform: translateY(0);
+            opacity: 1;
+            pointer-events: auto !important;
+        }
+
+        /* Compact bottom dock */
+        #bottom-dock {
+            position: absolute;
+            bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 8px;
+            padding: 8px;
+            background: rgba(6, 6, 8, 0.78);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(212, 175, 55, 0.28);
+            border-radius: 28px;
+            pointer-events: auto;
+        }
+        .dock-btn {
+            width: 46px;
+            height: 46px;
+            border-radius: 50%;
+            border: 1px solid rgba(212, 175, 55, 0.25);
+            background: rgba(255, 255, 255, 0.06);
+            color: white;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s ease;
+        }
+        .dock-btn:active { transform: scale(0.88); background: rgba(212, 175, 55, 0.35); }
+        .dock-btn.active { background: rgba(212, 175, 55, 0.4); border-color: #d4af37; }
+
+        /* Status toast: top-center, out of the camera's way */
+        #status {
+            top: calc(66px + env(safe-area-inset-top, 0px));
+            left: 50%;
+            bottom: auto;
+            transform: translateX(-50%);
+            max-width: 78vw;
+            text-align: center;
+            font-size: 13px;
+            padding: 10px 18px;
+            border-radius: 20px;
+        }
+
+        /* First-run hint chip */
+        #hint {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(6, 6, 8, 0.8);
+            border: 1px solid rgba(212, 175, 55, 0.45);
+            color: rgba(255, 248, 230, 0.95);
+            font-family: 'Playfair Display', Georgia, serif;
+            font-style: italic;
+            font-size: 16px;
+            padding: 14px 22px;
+            border-radius: 24px;
+            pointer-events: none;
+            opacity: 1;
+            transition: opacity 0.6s ease;
+            white-space: nowrap;
+            z-index: 20;
+        }
+        #hint.fade { opacity: 0; }
+
+        /* Sheets and modals respect the viewport */
+        #share-sheet {
+            padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+            max-height: 80dvh;
+            overflow-y: auto;
+        }
+        .modal-content {
+            padding-top: calc(40px + env(safe-area-inset-top, 0px));
+            padding-bottom: calc(30px + env(safe-area-inset-bottom, 0px));
+        }
+        #measurement-display {
+            top: auto;
+            bottom: calc(146px + env(safe-area-inset-bottom, 0px));
+        }
     </style>
 </head>
 <body>
@@ -1333,67 +1491,56 @@
     </div>
 
     <!-- AR Canvas -->
+    <!-- The AR scene lives in the DOM from page load so Zappar's permission
+         flow runs exactly as in their reference apps -->
+    <a-scene vr-mode-ui="enabled: false"
+             device-orientation-permission-ui="enabled: false"
+             loading-screen="enabled: false"
+             renderer="colorManagement: true; antialias: true">
+        <a-entity zappar-permissions-ui id="permissions"></a-entity>
+        <a-entity zappar-compatibility-ui id="compatibility"></a-entity>
+        <a-entity camera zappar-camera id="z-camera"></a-entity>
+        <a-entity id="instant-anchor" zappar-instant="placement-mode: true; anchor-pose-offset: 0 0 -3"></a-entity>
+    </a-scene>
+
     <div id="canvas-container" class="hidden">
-        <div id="scene-mount"></div>
         
         <div id="ui-overlay">
             <!-- Top Bar -->
             <div id="top-bar">
-                <div id="search-panel">
-                    <input type="text" id="search-input" placeholder="Search artworks...">
-                    
-                    <div class="search-filters">
-                        <div class="filter-chip active" data-source="museum">Museum</div>
-                        <div class="filter-chip" data-source="modern">Modern</div>
-                        <div class="filter-chip" data-source="photography">Photography</div>
-                        <div class="filter-chip" data-source="nft">NFTs</div>
-                    </div>
-                    
-                    <button id="search-btn">Search Art</button>
-                </div>
-                
+                <button class="top-btn" id="search-toggle" title="Search">🔍</button>
                 <button class="top-btn" id="favorites-btn">
                     ❤️
                     <span class="badge" id="favorites-count">0</span>
                 </button>
-                
                 <button class="top-btn" id="templates-btn">📐</button>
-
                 <button class="top-btn" id="exit-ar-btn" title="Exit AR">✕</button>
+            </div>
+
+            <div id="search-panel">
+                <input type="text" id="search-input" placeholder="Search artworks...">
+
+                <div class="search-filters">
+                    <div class="filter-chip active" data-source="museum">Museum</div>
+                    <div class="filter-chip" data-source="modern">Modern</div>
+                    <div class="filter-chip" data-source="photography">Photography</div>
+                    <div class="filter-chip" data-source="nft">NFTs</div>
+                </div>
+
+                <button id="search-btn">Search Art</button>
             </div>
 
             <!-- Art Gallery -->
             <div id="art-gallery"></div>
 
-            <!-- Bottom Controls -->
-            <div id="bottom-controls">
-                <div class="control-grid">
-                    <button class="control-btn" id="size-up">
-                        <span>➕</span>
-                        <span>Larger</span>
-                    </button>
-                    <button class="control-btn" id="size-down">
-                        <span>➖</span>
-                        <span>Smaller</span>
-                    </button>
-                    <button class="control-btn" id="measure-btn">
-                        <span>📏</span>
-                        <span>Measure</span>
-                    </button>
-                    <button class="control-btn" id="screenshot-btn">
-                        <span>📸</span>
-                        <span>Photo</span>
-                    </button>
-                    <button class="control-btn primary" id="replace-btn">
-                        <span>📍 Move Wall</span>
-                    </button>
-                    <button class="control-btn primary" id="share-btn">
-                        <span>🔗 Share This View</span>
-                    </button>
-                    <button class="control-btn primary wide" id="buy-btn">
-                        <span>🛒 Purchase Art</span>
-                    </button>
-                </div>
+            <!-- Bottom Dock -->
+            <div id="bottom-dock">
+                <button class="dock-btn" id="gallery-toggle" title="Artworks">🖼</button>
+                <button class="dock-btn" id="size-down" title="Smaller">➖</button>
+                <button class="dock-btn" id="size-up" title="Larger">➕</button>
+                <button class="dock-btn" id="replace-btn" title="Move wall">📍</button>
+                <button class="dock-btn" id="screenshot-btn" title="Photo">📸</button>
+                <button class="dock-btn" id="more-btn" title="More">⋯</button>
             </div>
 
             <!-- Measurement Display -->
@@ -1403,6 +1550,7 @@
 
             <!-- Status Message -->
             <div id="status" class="hidden"></div>
+                <div id="hint" class="fade">Point at your wall · tap to hang the art</div>
         </div>
     </div>
 
@@ -1431,9 +1579,20 @@
 
     <!-- Share Sheet -->
     <div id="share-sheet">
-        <h3 style="color: white; margin-bottom: 8px;">Share Your Gallery</h3>
-        <p style="color: rgba(255,255,255,0.7); font-size: 14px;">Share this artwork placement</p>
-        
+        <h3 style="color: white; margin-bottom: 8px;">Options</h3>
+        <p style="color: rgba(255,255,255,0.7); font-size: 14px;">Measure, purchase and share this placement</p>
+
+        <div class="share-options">
+            <div class="share-option" id="measure-btn">
+                <div class="share-option-icon">📏</div>
+                <div class="share-option-label">Measure</div>
+            </div>
+            <div class="share-option" id="buy-btn">
+                <div class="share-option-icon">🛒</div>
+                <div class="share-option-label">Purchase</div>
+            </div>
+        </div>
+
         <div class="share-options">
             <div class="share-option" onclick="shareToSocial('twitter')">
                 <div class="share-option-icon">🐦</div>
