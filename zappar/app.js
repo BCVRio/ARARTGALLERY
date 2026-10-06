@@ -10,6 +10,7 @@
 let sceneEl = null;
 let anchorEl = null;
 let galleryGroup = null;        // THREE.Group that holds artwork meshes
+let gesturesWired = false;
 let anchored = false;
 let currentArtwork = null;      // primary mesh (single placement)
 let templateMeshes = [];        // meshes placed by a room template
@@ -138,6 +139,7 @@ document.getElementById('size-down').addEventListener('click', () => {
 });
 
 document.getElementById('measure-btn').addEventListener('click', () => {
+    shareSheet.classList.remove('active');
     measurementMode = !measurementMode;
     if (measurementMode) {
         measurementDisplay.classList.add('active');
@@ -156,12 +158,24 @@ document.getElementById('replace-btn').addEventListener('click', () => {
     showStatus('Point at your wall, then tap to re-place the gallery');
 });
 
-document.getElementById('share-btn').addEventListener('click', () => {
+document.getElementById('more-btn').addEventListener('click', () => {
     shareSheet.classList.add('active');
-    setTimeout(() => shareSheet.classList.remove('active'), 5000);
 });
 
-document.getElementById('buy-btn').addEventListener('click', openPurchaseLink);
+document.getElementById('search-toggle').addEventListener('click', () => {
+    searchPanel.classList.toggle('open');
+});
+
+const galleryToggle = document.getElementById('gallery-toggle');
+galleryToggle.addEventListener('click', () => {
+    artGallery.classList.toggle('open');
+    galleryToggle.classList.toggle('active', artGallery.classList.contains('open'));
+});
+
+document.getElementById('buy-btn').addEventListener('click', () => {
+    shareSheet.classList.remove('active');
+    openPurchaseLink();
+});
 document.getElementById('favorites-btn').addEventListener('click', () => openModal('favorites-modal'));
 document.getElementById('templates-btn').addEventListener('click', () => {
     openModal('templates-modal');
@@ -176,10 +190,17 @@ searchInput.addEventListener('keypress', (e) => {
 document.getElementById('apply-template-btn').addEventListener('click', applyTemplate);
 
 document.addEventListener('click', (e) => {
-    if (!shareSheet.contains(e.target) && e.target.id !== 'share-btn') {
+    if (!shareSheet.contains(e.target) && e.target.id !== 'more-btn') {
         shareSheet.classList.remove('active');
     }
 });
+
+// The scene lives in the page from load (Zappar's reference pattern), so
+// bind to it immediately; this script runs at the end of <body>
+sceneEl = document.querySelector('a-scene');
+anchorEl = document.getElementById('instant-anchor');
+galleryGroup = new THREE.Group();
+anchorEl.object3D.add(galleryGroup);
 
 async function initAR() {
     if (!window.AFRAME || !window.AFRAME.components['zappar-camera']) {
@@ -194,46 +215,20 @@ async function initAR() {
     startScreen.classList.add('hidden');
     canvasContainer.classList.remove('hidden');
 
-    // The scene is injected on demand so the camera (and Zappar's permission
-    // prompts) only start after the user taps the Start button
-    if (!sceneEl) {
-        buildScene();
+    if (!gesturesWired) {
+        gesturesWired = true;
+        const wireUp = () => {
+            setupGestures(sceneEl.canvas);
+            showHint();
+        };
+        if (sceneEl.hasLoaded) {
+            wireUp();
+        } else {
+            sceneEl.addEventListener('loaded', wireUp, { once: true });
+        }
     }
 
     await searchArt('impressionism');
-}
-
-function buildScene() {
-    const mount = document.getElementById('scene-mount');
-    mount.insertAdjacentHTML('beforeend', `
-        <a-scene embedded
-                 vr-mode-ui="enabled: false"
-                 device-orientation-permission-ui="enabled: false"
-                 loading-screen="enabled: false"
-                 renderer="colorManagement: true; antialias: true">
-            <a-entity zappar-permissions-ui id="permissions"></a-entity>
-            <a-entity zappar-compatibility-ui id="compatibility"></a-entity>
-            <a-entity camera zappar-camera id="z-camera"></a-entity>
-            <a-entity id="instant-anchor" zappar-instant="placement-mode: true; anchor-pose-offset: 0 0 -3"></a-entity>
-        </a-scene>
-    `);
-
-    sceneEl = mount.querySelector('a-scene');
-    anchorEl = document.getElementById('instant-anchor');
-
-    galleryGroup = new THREE.Group();
-    anchorEl.object3D.add(galleryGroup);
-
-    const wireUp = () => {
-        setupGestures(sceneEl.canvas);
-        showStatus('Point at your wall, then tap to place the art. Drag to move, pinch to resize.');
-    };
-
-    if (sceneEl.hasLoaded) {
-        wireUp();
-    } else {
-        sceneEl.addEventListener('loaded', wireUp, { once: true });
-    }
 }
 
 // Tap anchors the gallery to the world (and places the selected artwork);
@@ -333,6 +328,8 @@ function onTap() {
     if (!anchored) {
         anchorEl.setAttribute('zappar-instant', 'placementMode', false);
         anchored = true;
+        hideHint();
+        showStatus('Anchored — the art is pinned to your wall');
     }
 
     if (pendingTemplate) {
@@ -399,6 +396,7 @@ function placeArtwork() {
         galleryGroup.scale.set(1, 1, 1);
         galleryGroup.position.set(0, 0, 0);
 
+        hideHint();
         showStatus(`Placed: ${placingArt.title}`);
         if (measurementMode) updateMeasurement();
     });
@@ -480,6 +478,9 @@ async function searchArt(query = null) {
 
         artworks = artworksData;
         displayArtGallery();
+        artGallery.classList.add('open');
+        document.getElementById('gallery-toggle').classList.add('active');
+        searchPanel.classList.remove('open');
         status.classList.add('hidden');
 
         if (artworks.length === 0) {
@@ -741,6 +742,17 @@ function applyTemplate() {
         pendingTemplate = selectedTemplate;
         showStatus(`${selectedTemplate.name} ready! Tap the wall to place your gallery.`);
     }
+}
+
+function showHint() {
+    const hint = document.getElementById('hint');
+    hint.classList.remove('fade');
+    clearTimeout(showHint._t);
+    showHint._t = setTimeout(() => hint.classList.add('fade'), 4500);
+}
+
+function hideHint() {
+    document.getElementById('hint').classList.add('fade');
 }
 
 function showStatus(message) {
