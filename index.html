@@ -2158,23 +2158,36 @@
 
                 // Different sources based on filter
                 if (currentSource === 'museum') {
-                    const response = await fetch(
-                        `https://api.artic.edu/api/v1/artworks/search?q=${encodeURIComponent(searchQuery)}&limit=20&fields=id,title,artist_display,image_id,date_display`
-                    );
+                    // Wikimedia Commons: reliable hotlinking with CORS headers, which WebGL
+                    // textures require (the Art Institute's image CDN now sits behind a bot
+                    // challenge and 403s embedded images)
+                    const api = 'https://commons.wikimedia.org/w/api.php?action=query&generator=search' +
+                        `&gsrsearch=${encodeURIComponent(searchQuery + ' painting')}&gsrnamespace=6&gsrlimit=18` +
+                        '&prop=imageinfo&iiprop=url%7Cmime%7Cextmetadata&iiurlwidth=1000&format=json&origin=*';
+                    const response = await fetch(api);
                     const data = await response.json();
-                    
-                    artworksData = data.data
-                        .filter(art => art.image_id)
-                        .map(art => ({
-                            id: art.id,
-                            title: art.title,
-                            artist: art.artist_display || 'Unknown Artist',
-                            date: art.date_display,
-                            imageUrl: `https://www.artic.edu/iiif/2/${art.image_id}/full/843,/0/default.jpg`,
-                            thumbnailUrl: `https://www.artic.edu/iiif/2/${art.image_id}/full/200,/0/default.jpg`,
-                            source: 'Art Institute of Chicago',
-                            purchaseUrl: `https://www.artic.edu/artworks/${art.id}`
-                        }));
+                    const strip = (f) => f && f.value ? f.value.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() : '';
+
+                    artworksData = Object.values((data.query && data.query.pages) || {})
+                        .sort((a, b) => (a.index || 0) - (b.index || 0))
+                        .map(p => ({ page: p, info: (p.imageinfo || [])[0] }))
+                        .filter(x => x.info && x.info.thumburl && /^image\/(jpeg|png)/.test(x.info.mime || ''))
+                        .map(({ page, info }) => {
+                            const meta = info.extmetadata || {};
+                            const fallbackTitle = page.title.replace(/^File:/, '').replace(/\.[^.]+$/, '').replace(/_/g, ' ');
+                            return {
+                                id: page.pageid,
+                                title: strip(meta.ObjectName) || fallbackTitle,
+                                artist: strip(meta.Artist) || 'Unknown artist',
+                                date: strip(meta.DateTimeOriginal),
+                                imageUrl: info.thumburl,
+                                thumbnailUrl: info.thumburl.includes('/1000px-')
+                                    ? info.thumburl.replace('/1000px-', '/320px-')
+                                    : info.thumburl,
+                                source: 'Wikimedia Commons',
+                                purchaseUrl: info.descriptionurl
+                            };
+                        });
                 } else if (currentSource === 'modern') {
                     // Simulate modern art source
                     artworksData = generatePlaceholderArt('Modern Art', searchQuery);

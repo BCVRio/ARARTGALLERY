@@ -6,6 +6,33 @@
 // inside the anchor, so drag/pinch/template layouts are plain local-space
 // transforms and everything stays anchored together.
 
+// On-device diagnostics: open the page with ?debug=1 to see a live log
+// overlay (errors, warnings, AR pipeline state) without remote debugging
+if (location.search.indexOf('debug=1') !== -1) {
+    const panel = document.createElement('pre');
+    panel.style.cssText = 'position:fixed;left:0;right:0;bottom:0;max-height:38vh;overflow:auto;' +
+        'background:rgba(0,0,0,0.85);color:#7CFC00;font:10px/1.4 monospace;padding:8px;margin:0;' +
+        'z-index:99999;white-space:pre-wrap;pointer-events:auto;';
+    const log = (tag, args) => {
+        panel.textContent += tag + ' ' + Array.from(args).map(a => {
+            try { return typeof a === 'string' ? a : JSON.stringify(a); } catch (e) { return String(a); }
+        }).join(' ') + '\n';
+        panel.scrollTop = panel.scrollHeight;
+    };
+    document.addEventListener('DOMContentLoaded', () => {
+        document.body.appendChild(panel);
+        log('[i]', ['AFRAME ' + (window.AFRAME ? AFRAME.version : 'MISSING'),
+                    'THREE r' + (window.AFRAME ? AFRAME.THREE.REVISION : '?'),
+                    'UA ' + navigator.userAgent.slice(0, 80)]);
+    });
+    ['log', 'warn', 'error'].forEach(level => {
+        const orig = console[level].bind(console);
+        console[level] = (...args) => { log('[' + level[0] + ']', args); orig(...args); };
+    });
+    window.addEventListener('error', e => log('[E]', [e.message, e.filename + ':' + e.lineno]));
+    window.addEventListener('unhandledrejection', e => log('[P]', [String(e.reason)]));
+}
+
 // App State
 let sceneEl = null;
 let anchorEl = null;
@@ -220,6 +247,18 @@ async function initAR() {
         const wireUp = () => {
             setupGestures(sceneEl.canvas);
             showHint();
+            let checks = 0;
+            const watchdog = setInterval(() => {
+                checks++;
+                if (sceneEl.object3D && sceneEl.object3D.background) {
+                    clearInterval(watchdog);
+                    console.log('camera feed rendering after', checks, 's');
+                } else if (checks >= 8) {
+                    clearInterval(watchdog);
+                    console.error('camera background texture never arrived');
+                    showStatus('Camera feed is not rendering. Reload the page — if it persists, add ?debug=1 to the address and send a screenshot.');
+                }
+            }, 1000);
         };
         if (sceneEl.hasLoaded) {
             wireUp();
@@ -371,6 +410,9 @@ function loadArtTexture(art, onLoad) {
 }
 
 function makeArtMesh(texture, width, art) {
+    if ('colorSpace' in texture && THREE.SRGBColorSpace) {
+        texture.colorSpace = THREE.SRGBColorSpace;
+    }
     const aspect = texture.image.width / texture.image.height;
     const height = width / aspect;
     const geometry = new THREE.PlaneGeometry(width, height);
@@ -451,23 +493,36 @@ async function searchArt(query = null) {
         let artworksData = [];
 
         if (currentSource === 'museum') {
-            const response = await fetch(
-                `https://api.artic.edu/api/v1/artworks/search?q=${encodeURIComponent(searchQuery)}&limit=20&fields=id,title,artist_display,image_id,date_display`
-            );
+            // Wikimedia Commons: reliable hotlinking with CORS headers, which WebGL
+            // textures require (the Art Institute's image CDN now sits behind a bot
+            // challenge and 403s embedded images)
+            const api = 'https://commons.wikimedia.org/w/api.php?action=query&generator=search' +
+                `&gsrsearch=${encodeURIComponent(searchQuery + ' painting')}&gsrnamespace=6&gsrlimit=18` +
+                '&prop=imageinfo&iiprop=url%7Cmime%7Cextmetadata&iiurlwidth=1000&format=json&origin=*';
+            const response = await fetch(api);
             const data = await response.json();
+            const strip = (f) => f && f.value ? f.value.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() : '';
 
-            artworksData = data.data
-                .filter(art => art.image_id)
-                .map(art => ({
-                    id: art.id,
-                    title: art.title,
-                    artist: art.artist_display || 'Unknown Artist',
-                    date: art.date_display,
-                    imageUrl: `https://www.artic.edu/iiif/2/${art.image_id}/full/843,/0/default.jpg`,
-                    thumbnailUrl: `https://www.artic.edu/iiif/2/${art.image_id}/full/200,/0/default.jpg`,
-                    source: 'Art Institute of Chicago',
-                    purchaseUrl: `https://www.artic.edu/artworks/${art.id}`
-                }));
+            artworksData = Object.values((data.query && data.query.pages) || {})
+                .sort((a, b) => (a.index || 0) - (b.index || 0))
+                .map(p => ({ page: p, info: (p.imageinfo || [])[0] }))
+                .filter(x => x.info && x.info.thumburl && /^image\/(jpeg|png)/.test(x.info.mime || ''))
+                .map(({ page, info }) => {
+                    const meta = info.extmetadata || {};
+                    const fallbackTitle = page.title.replace(/^File:/, '').replace(/\.[^.]+$/, '').replace(/_/g, ' ');
+                    return {
+                        id: page.pageid,
+                        title: strip(meta.ObjectName) || fallbackTitle,
+                        artist: strip(meta.Artist) || 'Unknown artist',
+                        date: strip(meta.DateTimeOriginal),
+                        imageUrl: info.thumburl,
+                        thumbnailUrl: info.thumburl.includes('/1000px-')
+                            ? info.thumburl.replace('/1000px-', '/320px-')
+                            : info.thumburl,
+                        source: 'Wikimedia Commons',
+                        purchaseUrl: info.descriptionurl
+                    };
+                });
         } else if (currentSource === 'modern') {
             artworksData = generatePlaceholderArt('Modern Art', searchQuery);
         } else if (currentSource === 'photography') {
