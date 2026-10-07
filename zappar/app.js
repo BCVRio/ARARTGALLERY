@@ -137,6 +137,134 @@ const favoritesCount = document.getElementById('favorites-count');
 const measurementDisplay = document.getElementById('measurement-display');
 const shareSheet = document.getElementById('share-sheet');
 
+
+// — Sound: title ambience + synthesized UI effects (persisted toggle) —
+const sfx = (() => {
+    let ctx = null;
+    let on = localStorage.getItem('gallerySound') === 'on';
+
+    function ac() {
+        if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+        if (ctx.state === 'suspended') ctx.resume();
+        return ctx;
+    }
+
+    function tone(freq, dur, opts) {
+        if (!on) return;
+        opts = opts || {};
+        try {
+            const c = ac();
+            const t0 = c.currentTime + (opts.delay || 0);
+            const osc = c.createOscillator();
+            const g = c.createGain();
+            osc.type = opts.type || 'sine';
+            osc.frequency.setValueAtTime(freq, t0);
+            if (opts.glide) osc.frequency.exponentialRampToValueAtTime(opts.glide, t0 + dur);
+            g.gain.setValueAtTime(0.0001, t0);
+            g.gain.exponentialRampToValueAtTime(opts.vol || 0.08, t0 + 0.012);
+            g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+            osc.connect(g).connect(c.destination);
+            osc.start(t0);
+            osc.stop(t0 + dur + 0.05);
+        } catch (e) {}
+    }
+
+    function noiseBurst(dur, vol) {
+        if (!on) return;
+        try {
+            const c = ac();
+            const frames = Math.floor(c.sampleRate * dur);
+            const buf = c.createBuffer(1, frames, c.sampleRate);
+            const data = buf.getChannelData(0);
+            for (let i = 0; i < frames; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / frames);
+            const src = c.createBufferSource();
+            src.buffer = buf;
+            const filter = c.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.value = 2400;
+            const g = c.createGain();
+            g.gain.value = vol;
+            src.connect(filter);
+            filter.connect(g);
+            g.connect(c.destination);
+            src.start();
+        } catch (e) {}
+    }
+
+    function sync() {
+        const b = document.getElementById('sound-toggle');
+        if (b) b.textContent = on ? '🔊' : '🔇';
+        const a = document.getElementById('ambience');
+        if (a) {
+            a.volume = 0.35;
+            if (on) a.play().catch(() => {}); else a.pause();
+        }
+    }
+
+    return {
+        get on() { return on; },
+        toggle() {
+            on = !on;
+            localStorage.setItem('gallerySound', on ? 'on' : 'off');
+            if (on) ac();
+            sync();
+            this.tap();
+        },
+        sync,
+        tap()     { tone(740, 0.07, { glide: 540, vol: 0.05 }); },
+        select()  { tone(620, 0.07, { vol: 0.05 }); tone(930, 0.09, { vol: 0.05, delay: 0.06 }); },
+        hang()    { tone(660, 0.35, { type: 'triangle', vol: 0.09 }); tone(990, 0.45, { type: 'triangle', vol: 0.05, delay: 0.05 }); },
+        anchor()  { tone(196, 0.5, { vol: 0.1 }); tone(294, 0.55, { vol: 0.06, delay: 0.08 }); },
+        shutter() { noiseBurst(0.09, 0.12); }
+    };
+})();
+
+document.getElementById('sound-toggle').addEventListener('click', (e) => {
+    e.stopPropagation();
+    sfx.toggle();
+});
+sfx.sync();
+
+// One delegated, subtle tap sound for every tactile control
+document.addEventListener('click', (e) => {
+    if (e.target.closest('.dock-btn, .top-btn, .hero-cta, #search-btn, .btn-primary, .filter-chip, .share-option, .art-item, .template-card, .favorite-card')) {
+        sfx.tap();
+    }
+});
+
+const CURATED_COLLECTIONS = {
+    modern: [
+        ['Fractured Gilt', 'Atelier Noir', '1,450.00'],
+        ['Two Gestures', 'M. Hara', '820.00'],
+        ['Bronze Planes', 'V. Keller', '990.00'],
+        ['Terrain in Gold', 'E. Marchetti', '1,200.00'],
+        ['Molten Vein', 'Atelier Noir', '1,680.00'],
+        ['Quiet Horizon', 'R. Ostrowski', '760.00']
+    ],
+    photography: [
+        ['Concrete Light', 'D. Veld', '540.00'],
+        ['First Fog', 'A. Lindqvist', '620.00'],
+        ['Silk Tide', 'N. Okabe', '580.00'],
+        ['Golden Ridge', 'S. Amari', '640.00'],
+        ['Ascent', 'L. Fontaine', '520.00'],
+        ['City Rain', 'J. Mercer', '560.00']
+    ]
+};
+
+function curatedCollection(kind, label) {
+    const prefix = kind === 'modern' ? 'modern' : 'photo';
+    return CURATED_COLLECTIONS[kind].map(([title, artist, price], i) => ({
+        id: `${kind}-${i + 1}`,
+        title,
+        artist,
+        imageUrl: `assets/collections/${prefix}-${i + 1}.jpg`,
+        thumbnailUrl: `assets/collections/${prefix}-${i + 1}-thumb.jpg`,
+        source: label,
+        purchaseUrl: '#',
+        price
+    }));
+}
+
 // Initialize
 updateFavoritesCount();
 initParallax();
@@ -327,6 +455,7 @@ function chooseTracking() {
                 anchored = true;
                 setPlacing(false);
                 hideHint();
+                sfx.anchor();
                 showStatus('Wall locked — tap to hang art, tap a picture to select it');
                 updateDockButtons();
                 if (pendingTemplate) {
@@ -359,6 +488,9 @@ async function initAR() {
 
     startScreen.classList.add('hidden');
     canvasContainer.classList.remove('hidden');
+
+    const heroVideo = document.getElementById('hero-video');
+    if (heroVideo) heroVideo.pause();
 
     if (cameraPaused) {
         const cam = getZapparCamera();
@@ -570,6 +702,7 @@ function onTap(target) {
 
     if (target) {
         setSelectedPicture(target);
+        sfx.select();
         showStatus(`Selected: ${target.userData.art.title}`);
         return;
     }
@@ -640,6 +773,7 @@ function placeArtwork() {
         setSelectedPicture(mesh);
         updateDockButtons();
 
+        sfx.hang();
         hideHint();
         showStatus(`Hung: ${placingArt.title} — drag to fine-tune`);
         if (measurementMode) updateMeasurement();
@@ -726,9 +860,9 @@ async function searchArt(query = null) {
                     };
                 });
         } else if (currentSource === 'modern') {
-            artworksData = generatePlaceholderArt('Modern Art', searchQuery);
+            artworksData = curatedCollection('modern', 'Modern Collection');
         } else if (currentSource === 'photography') {
-            artworksData = generatePlaceholderArt('Photography', searchQuery);
+            artworksData = curatedCollection('photography', 'Photography Collection');
         } else if (currentSource === 'nft') {
             artworksData = generatePlaceholderArt('NFT Collection', searchQuery);
         }
@@ -781,7 +915,7 @@ function displayArtGallery() {
                 ${isFavorite ? '❤️' : '🤍'}
             </div>
             ${art.price ? `<div class="buy-badge">$${art.price}</div>` : ''}
-            <img crossorigin="anonymous" src="${art.thumbnailUrl}" alt="${art.title}" onerror="this.src='https://placehold.co/200x250?text=Art'">
+            <img crossorigin="anonymous" src="${art.thumbnailUrl}" alt="${art.title}" onerror="this.src='assets/brand/art-placeholder.jpg'">
             <div class="art-item-title">${art.title}</div>
         `;
 
@@ -857,6 +991,7 @@ function takeScreenshot() {
         link.href = dataUrl;
         link.click();
 
+        sfx.shutter();
         showStatus('Screenshot saved!');
     } catch (error) {
         console.error('Screenshot error:', error);
@@ -970,11 +1105,7 @@ function loadTemplates() {
         card.innerHTML = `
             <h3>${template.name}</h3>
             <p>${template.description}</p>
-            <div class="template-artworks">
-                ${Array.from({ length: Math.min(template.artworks, 4) }).map((_, i) =>
-                    `<img crossorigin="anonymous" src="https://picsum.photos/60/60?random=${template.id}-${i}" alt="Preview">`
-                ).join('')}
-            </div>
+            <img class="template-preview" src="assets/templates/${template.id}.jpg" alt="${template.name}">
         `;
 
         card.addEventListener('click', () => {
@@ -1040,6 +1171,11 @@ function exitAR() {
         cameraPaused = true;
         canvasContainer.classList.add('hidden');
         startScreen.classList.remove('hidden');
+        const heroVideo = document.getElementById('hero-video');
+        if (heroVideo) {
+            heroVideo.currentTime = 0;
+            heroVideo.play().catch(() => {});
+        }
         return;
     }
     // No pause API available — reloading is the only way to stop the camera
