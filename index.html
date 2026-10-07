@@ -1810,9 +1810,9 @@
                 if (a) {
                     if (on) {
                         if (a.paused) { a.volume = 0; a.play().catch(() => {}); }
-                        fadeAudio(a, 0.35, 1200);
+                        fadeAudio(a, 0.35, 2000);
                     } else {
-                        fadeAudio(a, 0, 600, () => a.pause());
+                        fadeAudio(a, 0, 1500, () => a.pause());
                     }
                 }
             }
@@ -2004,7 +2004,7 @@
             const heroVideo = document.getElementById('hero-video');
             if (heroVideo) heroVideo.pause();
             const amb = document.getElementById('ambience');
-            if (amb) fadeAudio(amb, 0, 900, () => amb.pause());
+            if (amb) fadeAudio(amb, 0, 2500, () => amb.pause());
 
             try {
                 if (xrSupported) {
@@ -2710,7 +2710,7 @@
                 amb.currentTime = 0;
                 amb.volume = 0;
                 amb.play().catch(() => {});
-                fadeAudio(amb, 0.35, 1200);
+                fadeAudio(amb, 0.35, 2000);
             }
         }
 
