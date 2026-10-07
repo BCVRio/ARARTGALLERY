@@ -7,6 +7,43 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;0,900;1,400;1,600&display=swap" rel="stylesheet">
+    <script>
+        // ZapWorks hosting serves pages with COEP: require-corp but no COEP
+        // header on static assets, so dedicated workers created from a URL
+        // (Zappar's solver chunk) are blocked by the browser. A same-origin
+        // importScripts trampoline through a blob sidesteps that — blob
+        // workers inherit the page's policy and same-origin subresource
+        // loads are never subject to CORP checks. No-op outside COEP.
+        (function () {
+            const RealWorker = window.Worker;
+            window.Worker = function (url, opts) {
+                try {
+                    const u = new URL(url, location.href);
+                    if (window.crossOriginIsolated && u.origin === location.origin &&
+                        u.protocol.indexOf('http') === 0 && !(opts && opts.type === 'module')) {
+                        // Chunks import sibling scripts relative to their own
+                        // location, which inside a blob resolves nowhere — pin
+                        // relative resolution back to the script's real directory
+                        const base = u.href.slice(0, u.href.lastIndexOf('/') + 1);
+                        const code =
+                            'const __is = self.importScripts.bind(self);' +
+                            'self.importScripts = function () {' +
+                            '  __is.apply(null, Array.prototype.map.call(arguments, function (x) {' +
+                            '    x = String(x);' +
+                            '    if (x.indexOf("blob:") === 0) { x = x.slice(x.lastIndexOf("/") + 1); }' +
+                            '    return new URL(x, ' + JSON.stringify(base) + ').href;' +
+                            '  }));' +
+                            '};' +
+                            'self.importScripts(' + JSON.stringify(u.href) + ');';
+                        const blob = new Blob([code], { type: 'application/javascript' });
+                        return new RealWorker(URL.createObjectURL(blob), opts);
+                    }
+                } catch (e) { /* fall through to the native path */ }
+                return new RealWorker(url, opts);
+            };
+            window.Worker.prototype = RealWorker.prototype;
+        })();
+    </script>
     <script src="aframe.min.js"></script>
     <script src="zappar-aframe.js"></script>
     <style>
