@@ -1476,6 +1476,30 @@
             backdrop-filter: blur(6px);
         }
 
+        /* Zappar's injected scan/place UI, dressed to match the app */
+        .zappar-three-place-ui-button {
+            background: linear-gradient(135deg, #d4af37 0%, #8c6a1f 100%) !important;
+            color: #171207 !important;
+            font-weight: 800 !important;
+            font-size: 15px !important;
+            letter-spacing: 0.3px !important;
+            border: 1px solid rgba(255, 235, 180, 0.55) !important;
+            border-radius: 28px !important;
+            height: 52px !important;
+            padding: 0 24px !important;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45), 0 0 24px rgba(212, 175, 55, 0.35) !important;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+        }
+        .zappar-three-place-ui-button-icon { display: none !important; }
+        .zappar-three-place-ui {
+            padding-bottom: calc(90px + env(safe-area-inset-bottom, 0px)) !important;
+        }
+        .zappar-world-tracker-ui-container {
+            background: rgba(6, 6, 8, 0.88) !important;
+            border: 1px solid rgba(212, 175, 55, 0.35) !important;
+            border-radius: 18px !important;
+        }
+
         .template-preview {
             width: 100%;
             height: 120px;
@@ -1490,7 +1514,7 @@
         <video id="hero-video" autoplay muted playsinline poster="assets/hero-bg.jpg">
             <source src="assets/brand/title-loop.mp4" type="video/mp4">
         </video>
-        <audio id="ambience" loop preload="none" src="assets/brand/ambience.m4a"></audio>
+        <audio id="ambience" preload="none" src="assets/brand/ambience.m4a"></audio>
         <button id="sound-toggle" class="sound-toggle" title="Sound">🔇</button>
         <!-- CSS Animated Background -->
         <div class="animated-background">
@@ -1655,7 +1679,7 @@
 
             <!-- Status Message -->
             <div id="status" class="hidden"></div>
-                <div id="hint" class="fade">Point at your wall · tap to hang the art</div>
+                <div id="hint" class="fade">Tap artwork in the strip to hang it · tap a picture to select</div>
         </div>
     </div>
 

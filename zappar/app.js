@@ -225,6 +225,22 @@ document.getElementById('sound-toggle').addEventListener('click', (e) => {
 });
 sfx.sync();
 
+// ZapWorks shows its own splash over the page, so the title film can finish
+// behind it. On the first real interaction, restart the film if it already
+// ran past its opening moments (or never started).
+(function () {
+    const kick = () => {
+        const v = document.getElementById('hero-video');
+        if (v && !startScreen.classList.contains('hidden') &&
+            (v.paused || v.ended || v.currentTime > 2.5)) {
+            v.currentTime = 0;
+            v.play().catch(() => {});
+        }
+        window.removeEventListener('pointerdown', kick, true);
+    };
+    window.addEventListener('pointerdown', kick, true);
+})();
+
 // One delegated, subtle tap sound for every tactile control
 document.addEventListener('click', (e) => {
     if (e.target.closest('.dock-btn, .top-btn, .hero-cta, #search-btn, .btn-primary, .filter-chip, .share-option, .art-item, .template-card, .favorite-card')) {
@@ -456,15 +472,21 @@ function chooseTracking() {
                 setPlacing(false);
                 hideHint();
                 sfx.anchor();
-                showStatus('Wall locked — tap to hang art, tap a picture to select it');
+                showStatus('Wall locked — tap artwork in the strip to hang it');
                 updateDockButtons();
                 if (pendingTemplate) {
                     buildTemplate(pendingTemplate);
                     pendingTemplate = null;
                 }
             } else if (!placed && anchored) {
-                anchored = false;
-                setPlacing(true);
+                if (placedArts.length > 0) {
+                    // A tracking wobble re-opened Zappar's placement mode;
+                    // snap back so the room anchor (and all hung art) holds
+                    try { worldGroup.placementMode = false; } catch (e) { worldGroup._placementMode = false; }
+                } else {
+                    anchored = false;
+                    setPlacing(true);
+                }
             }
         }, 400);
     } else {
@@ -491,6 +513,8 @@ async function initAR() {
 
     const heroVideo = document.getElementById('hero-video');
     if (heroVideo) heroVideo.pause();
+    const amb = document.getElementById('ambience');
+    if (amb) amb.pause();
 
     if (cameraPaused) {
         const cam = getZapparCamera();
@@ -696,7 +720,7 @@ function onTap(target) {
         anchorEl.setAttribute('zappar-instant', 'placementMode', false);
         anchored = true;
         hideHint();
-        showStatus('Anchored — tap to hang art, tap a picture to select it');
+        showStatus('Anchored — tap artwork in the strip to hang it');
         updateDockButtons();
     }
 
@@ -707,13 +731,11 @@ function onTap(target) {
         return;
     }
 
-    if (pendingTemplate) {
-        buildTemplate(pendingTemplate);
-        pendingTemplate = null;
-        return;
+    // Empty space never hangs art any more (hanging happens from the strip);
+    // it just clears the selection
+    if (selectedPlaced) {
+        setSelectedPicture(null);
     }
-
-    placeArtwork();
 }
 
 function clearGallery() {
@@ -764,6 +786,12 @@ function placeArtwork() {
 
     const placingArt = selectedArt;
     const pose = aimPoseInAnchor(2);
+    // Nudge sideways rather than stacking onto an already-hung picture
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(pose.quat);
+    let guard = 0;
+    while (guard++ < 6 && placedArts.some(m => m.position.distanceTo(pose.pos) < 0.45)) {
+        pose.pos.addScaledVector(right, 0.5);
+    }
     loadArtTexture(placingArt, (texture) => {
         const mesh = makeArtMesh(texture, 1, placingArt);
         mesh.position.copy(pose.pos);
@@ -927,7 +955,11 @@ function displayArtGallery() {
             });
             artItem.classList.add('selected');
             selectedArt = art;
-            showStatus(`Selected: ${art.title}`);
+            if (anchored) {
+                placeArtwork();
+            } else {
+                showStatus(`Selected: ${art.title}`);
+            }
         });
 
         artGallery.appendChild(artItem);
@@ -1088,7 +1120,11 @@ function loadFavorites() {
         card.addEventListener('click', () => {
             selectedArt = art;
             closeModal('favorites-modal');
-            showStatus(`Selected: ${art.title}`);
+            if (anchored) {
+                placeArtwork();
+            } else {
+                showStatus(`Selected: ${art.title}`);
+            }
         });
 
         favoritesList.appendChild(card);
@@ -1175,6 +1211,11 @@ function exitAR() {
         if (heroVideo) {
             heroVideo.currentTime = 0;
             heroVideo.play().catch(() => {});
+        }
+        const amb = document.getElementById('ambience');
+        if (sfx.on && amb) {
+            amb.currentTime = 0;
+            amb.play().catch(() => {});
         }
         return;
     }
