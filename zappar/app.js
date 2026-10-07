@@ -467,6 +467,11 @@ function chooseTracking() {
         // anchoring (it seeds the world map most reliably); we only gate WHEN
         // its Place button appears, and retire its UI forever after placing.
         const t0 = Date.now();
+        // If this environment refused to world-track before, don't make the
+        // user sit through the full ladder again
+        const failedBefore = (() => { try { return localStorage.getItem('arWorldFailed') === '1'; } catch (e) { return false; } })();
+        const skipAfter = failedBefore ? 2000 : 6000;
+        const capAfter = failedBefore ? 9000 : 25000;
         let buttonShown = false;
         let sawAiming = false;
         let placedByButton = false;
@@ -485,6 +490,8 @@ function chooseTracking() {
 
         const settle = () => {
             settled = true;
+            skipBtn.classList.add('hidden');
+            try { localStorage.removeItem('arWorldFailed'); } catch (e) {}
             anchored = true;
             setPlacing(false);
             hideHint();
@@ -504,7 +511,14 @@ function chooseTracking() {
             }
         };
 
+        const skipBtn = document.getElementById('skip-scan');
+
         const fallbackToInstant = () => {
+            clearInterval(poll);
+            skipBtn.classList.add('hidden');
+            // Remember that this environment would not world-track, so the
+            // next session goes to simple mode much faster
+            try { localStorage.setItem('arWorldFailed', '1'); } catch (e) {}
             removePlaceOverlay();
             try { worldGroup.enabled = false; } catch (e) {}
             try {
@@ -521,8 +535,11 @@ function chooseTracking() {
             anchorEl.object3D.add(galleryGroup);
             anchored = false;
             setPlacing(false);
-            setHint('Low-light mode — aim at your wall and tap once to set it');
+            setHint('Simple mode — aim at your wall and tap once to set it');
+            clearTimeout(showHint._t);
+            showHint._t = setTimeout(hideHint, 8000);
         };
+        skipBtn.addEventListener('click', fallbackToInstant);
 
         const poll = setInterval(() => {
             let ready = false;
@@ -550,8 +567,10 @@ function chooseTracking() {
                     settle();
                     return;
                 }
-                if (!ready && elapsed > 25000 && placedArts.length === 0) {
-                    clearInterval(poll);
+                if (!ready && elapsed > skipAfter) {
+                    skipBtn.classList.remove('hidden');
+                }
+                if (!ready && elapsed > capAfter && placedArts.length === 0) {
                     fallbackToInstant();
                     return;
                 }

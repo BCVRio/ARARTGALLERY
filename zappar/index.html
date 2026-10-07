@@ -1525,6 +1525,23 @@
             transform: translateY(calc(100% - 38px));
         }
 
+        .skip-scan {
+            position: absolute;
+            bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 20;
+            background: rgba(6, 6, 8, 0.78);
+            border: 1px solid rgba(212, 175, 55, 0.45);
+            color: rgba(255, 248, 230, 0.9);
+            font-size: 13px;
+            letter-spacing: 0.4px;
+            padding: 10px 20px;
+            border-radius: 22px;
+            pointer-events: auto;
+            backdrop-filter: blur(8px);
+        }
+
         /* Zappar's injected scan/place UI, dressed to match the app */
         .zappar-three-place-ui-button {
             background: linear-gradient(135deg, #d4af37 0%, #8c6a1f 100%) !important;
@@ -1723,6 +1740,7 @@
             <!-- Status Message -->
             <div id="status" class="hidden"></div>
                 <div id="hint" class="fade">Tap artwork in the strip to hang it · tap a picture to select</div>
+                <button id="skip-scan" class="skip-scan hidden">Skip — use simple mode</button>
         </div>
     </div>
 
