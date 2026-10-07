@@ -40,6 +40,9 @@ let galleryGroup = null;        // THREE.Group that holds artwork meshes
 let gesturesWired = false;
 let trackingMode = 'instant';   // 'world' (plane detection) or 'instant' fallback
 let worldGroup = null;          // Zappar UserPlacementAnchorGroup in world mode
+let cameraPaused = false;
+let placeGateOpen = false;      // scan-first: Place button hidden until the gate opens
+let scanGateUntil = 0;
 let anchored = false;
 let currentArtwork = null;      // primary mesh (single placement)
 let templateMeshes = [];        // meshes placed by a room template
@@ -184,7 +187,11 @@ document.getElementById('replace-btn').addEventListener('click', () => {
     if (trackingMode === 'world' && worldGroup) {
         try { worldGroup.placementMode = true; } catch (e) { worldGroup._placementMode = true; }
         anchored = false;
-        showStatus('Scan the wall, then press "Place on this wall"');
+        // The room is already mapped — just a short settle before placing
+        worldGroup.showPlaceButton = false;
+        placeGateOpen = false;
+        scanGateUntil = Date.now() + 2000;
+        setHint('Aim at your wall…');
         return;
     }
     if (!anchorEl) return;
@@ -237,6 +244,10 @@ galleryGroup = new THREE.Group();
 
 // Prefer Zappar world tracking (real plane detection, ~absolute scale); fall
 // back to instant tracking on devices where the world tracker fails to start
+function getZapparCamera() {
+    try { return sceneEl.systems['zappar-camera'].camera; } catch (e) { return null; }
+}
+
 function setPlacing(active) {
     document.getElementById('ui-overlay').classList.toggle('placing', active);
 }
@@ -251,8 +262,31 @@ function chooseTracking() {
         worldGroup.longPressToMove = false;
         anchorEl = worldEl;
         setPlacing(true);
+
+        // Walls matter most: vertical plane detection is off by default
+        try {
+            if (wp.tracker && wp.tracker.verticalPlaneDetectionSupported) {
+                wp.tracker.verticalPlaneDetectionEnabled = true;
+                console.log('wall (vertical plane) detection enabled');
+            } else {
+                console.log('vertical plane detection not supported on this device');
+            }
+        } catch (e) { console.log('vertical plane detection unavailable'); }
+
+        // Scan-first: keep the Place button hidden for a few seconds so the
+        // tracker maps more of the room (especially walls) before placing
+        worldGroup.showPlaceButton = false;
+        placeGateOpen = false;
+        scanGateUntil = Date.now() + 7000;
+        setHint('Pan slowly across your walls so the room gets mapped…');
         // Mirror Zappar's placement state onto the app's anchored flag
         setInterval(() => {
+            if (!placeGateOpen && Date.now() >= scanGateUntil) {
+                placeGateOpen = true;
+                worldGroup.showPlaceButton = true;
+                setHint(null);
+                showStatus('Aim at your wall, then tap "Place on this wall"');
+            }
             // Placed = tracker initialized AND the user confirmed a location;
             // _placementMode is false before init too, so gate on ready
             const placed = worldGroup.ready === true && worldGroup._placementMode === false;
@@ -292,12 +326,17 @@ async function initAR() {
     startScreen.classList.add('hidden');
     canvasContainer.classList.remove('hidden');
 
+    if (cameraPaused) {
+        const cam = getZapparCamera();
+        try { cam.start(false); } catch (e) { try { cam.start(); } catch (e2) {} }
+        cameraPaused = false;
+    }
+
     if (!gesturesWired) {
         gesturesWired = true;
         const wireUp = () => {
             chooseTracking();
             setupGestures(sceneEl.canvas);
-            // In world mode Zappar's own scan-and-place UI guides the user
             if (trackingMode !== 'world') showHint();
             let checks = 0;
             const watchdog = setInterval(() => {
@@ -319,7 +358,9 @@ async function initAR() {
         }
     }
 
-    await searchArt('impressionism');
+    if (artworks.length === 0) {
+        await searchArt('impressionism');
+    }
 }
 
 // Tap anchors the gallery to the world (and places the selected artwork);
@@ -861,6 +902,17 @@ function showHint() {
     showHint._t = setTimeout(() => hint.classList.add('fade'), 4500);
 }
 
+function setHint(text) {
+    const hint = document.getElementById('hint');
+    clearTimeout(showHint._t);
+    if (text === null) {
+        hint.classList.add('fade');
+        return;
+    }
+    hint.textContent = text;
+    hint.classList.remove('fade');
+}
+
 function hideHint() {
     document.getElementById('hint').classList.add('fade');
 }
@@ -874,7 +926,15 @@ function showStatus(message) {
 }
 
 function exitAR() {
-    // Reloading is the reliable way to fully stop Zappar's camera pipeline
+    const cam = getZapparCamera();
+    if (cam && typeof cam.pause === 'function') {
+        try { cam.pause(); } catch (e) {}
+        cameraPaused = true;
+        canvasContainer.classList.add('hidden');
+        startScreen.classList.remove('hidden');
+        return;
+    }
+    // No pause API available — reloading is the only way to stop the camera
     window.location.reload();
 }
 
