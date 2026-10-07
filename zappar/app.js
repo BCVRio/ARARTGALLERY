@@ -210,9 +210,9 @@ const sfx = (() => {
         if (a) {
             if (on) {
                 if (a.paused) { a.volume = 0; a.play().catch(() => {}); }
-                fadeAudio(a, 0.35, 1200);
+                fadeAudio(a, 0.35, 2000);
             } else {
-                fadeAudio(a, 0, 600, () => a.pause());
+                fadeAudio(a, 0, 1500, () => a.pause());
             }
         }
     }
@@ -256,7 +256,7 @@ document.getElementById('begin-gate').addEventListener('click', () => {
         amb.currentTime = 0;
         amb.volume = 0;
         amb.play().catch(() => {});
-        fadeAudio(amb, 0.35, 1200);
+        fadeAudio(amb, 0.35, 2000);
     }
 }, { once: true });
 
@@ -443,35 +443,60 @@ function setPlacing(active) {
 function chooseTracking() {
     if (anchorEl) return;
     const worldEl = document.getElementById('world-anchor');
-    const wp = worldEl && worldEl.components['zappar-world-placement'];
+    const wp = worldEl && worldEl.components['zappar-user-placement'];
     if (wp && wp.placementGroup) {
         trackingMode = 'world';
         worldGroup = wp.placementGroup;
+        worldGroup.longPressToMove = false;
+        worldGroup.showPlaceButton = false;
         anchorEl = worldEl;
         setPlacing(true);
-        setHint('Pan slowly across your room so it gets mapped…');
+        setHint('Aim at your wall and pan slowly so the room gets mapped…');
 
-        // Warm-up: give the world tracker a few seconds of scanning, then
-        // hanging is live — no confirm button, tap art and it is fixed there
+        // Walls matter most: vertical plane detection is off by default
+        try {
+            if (wp.tracker && wp.tracker.verticalPlaneDetectionSupported) {
+                wp.tracker.verticalPlaneDetectionEnabled = true;
+                console.log('wall (vertical plane) detection enabled');
+            } else {
+                console.log('vertical plane detection not supported on this device');
+            }
+        } catch (e) { console.log('vertical plane detection unavailable'); }
+
+        // Once the tracker is ready we confirm the anchor ourselves at the
+        // point the user is aiming — no button, tap-the-art-to-place feel —
+        // then keep placement pinned shut (ready-gated, so no flicker fights)
         const t0 = Date.now();
-        const warm = setInterval(() => {
-            let trackerReady = false;
-            try {
-                trackerReady = worldGroup.ready === true ||
-                    (worldGroup.worldTracker && worldGroup.worldTracker.ready === true);
-            } catch (e) {}
-            const elapsed = Date.now() - t0;
-            if ((trackerReady && elapsed > 3500) || elapsed > 8000) {
-                clearInterval(warm);
-                anchored = true;
-                setPlacing(false);
-                hideHint();
-                sfx.anchor();
-                showStatus('Room mapped — tap artwork in the strip to hang it');
-                if (pendingTemplate) {
-                    buildTemplate(pendingTemplate);
-                    pendingTemplate = null;
+        const lockIn = (limited) => {
+            try { worldGroup.placementMode = false; } catch (e) { worldGroup._placementMode = false; }
+            anchored = true;
+            setPlacing(false);
+            hideHint();
+            sfx.anchor();
+            showStatus(limited
+                ? 'Tracking is limited here — art may drift'
+                : 'Room mapped — tap artwork in the strip to hang it');
+            if (pendingTemplate) {
+                buildTemplate(pendingTemplate);
+                pendingTemplate = null;
+            }
+            setInterval(() => {
+                worldGroup.showPlaceButton = false;
+                if (worldGroup.ready === true && worldGroup._placementMode !== false) {
+                    try { worldGroup.placementMode = false; } catch (e) { worldGroup._placementMode = false; }
                 }
+            }, 500);
+        };
+        const warm = setInterval(() => {
+            let ready = false;
+            try { ready = worldGroup.ready === true; } catch (e) {}
+            const elapsed = Date.now() - t0;
+            if (ready && elapsed >= 4000) {
+                clearInterval(warm);
+                lockIn(false);
+            } else if (elapsed > 12000) {
+                clearInterval(warm);
+                lockIn(true);
             }
         }, 300);
     } else {
@@ -499,7 +524,7 @@ async function initAR() {
     const heroVideo = document.getElementById('hero-video');
     if (heroVideo) heroVideo.pause();
     const amb = document.getElementById('ambience');
-    if (amb) fadeAudio(amb, 0, 900, () => amb.pause());
+    if (amb) fadeAudio(amb, 0, 2500, () => amb.pause());
 
     if (cameraPaused) {
         const cam = getZapparCamera();
@@ -1204,7 +1229,7 @@ function exitAR() {
             amb.currentTime = 0;
             amb.volume = 0;
             amb.play().catch(() => {});
-            fadeAudio(amb, 0.35, 1200);
+            fadeAudio(amb, 0.35, 2000);
         }
         return;
     }
