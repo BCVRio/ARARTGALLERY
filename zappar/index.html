@@ -1530,16 +1530,28 @@
             background: linear-gradient(135deg, #d4af37 0%, #8c6a1f 100%) !important;
             color: #171207 !important;
             font-weight: 800 !important;
-            font-size: 15px !important;
-            letter-spacing: 0.3px !important;
+            font-size: 13px !important;
+            line-height: 1 !important;
+            letter-spacing: 0.6px !important;
+            text-transform: uppercase !important;
+            white-space: nowrap !important;
+            flex-direction: row !important;
             border: 1px solid rgba(255, 235, 180, 0.55) !important;
-            border-radius: 28px !important;
-            height: 52px !important;
-            padding: 0 24px !important;
+            border-radius: 26px !important;
+            height: 48px !important;
+            min-height: 48px !important;
+            padding: 0 26px !important;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45), 0 0 24px rgba(212, 175, 55, 0.35) !important;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
         }
-        .zappar-three-place-ui-button-icon { display: none !important; }
+        .zappar-three-place-ui-button:disabled { opacity: 0.45 !important; }
+        .zappar-three-place-ui-button-icon,
+        .zappar-three-place-ui-button svg,
+        .zappar-three-place-ui-button img { display: none !important; }
+        .zappar-three-place-ui-button-text {
+            padding: 0 !important;
+            white-space: nowrap !important;
+        }
         .zappar-three-place-ui {
             padding-bottom: calc(90px + env(safe-area-inset-bottom, 0px)) !important;
         }
@@ -1659,7 +1671,7 @@
         <a-entity zappar-compatibility-ui id="compatibility"></a-entity>
         <a-entity camera zappar-camera id="z-camera"></a-entity>
         <a-entity id="world-anchor"
-                  zappar-user-placement="placeOnPlanes: true; placeOnGround: false; showInitializationUI: true; visualizePlanesDuringPlacement: true; showPlaceButton: true; placeButtonText: Place on this wall; showRestartPlacementButton: false"></a-entity>
+                  zappar-user-placement="placeOnPlanes: true; placeOnGround: false; showInitializationUI: true; visualizePlanesDuringPlacement: true; showPlaceButton: true; placeButtonText: Place here; showRestartPlacementButton: false"></a-entity>
         <a-entity id="instant-anchor" zappar-instant="placement-mode: true; enabled: false; anchor-pose-offset: 0 0 -3"></a-entity>
     </a-scene>
 
