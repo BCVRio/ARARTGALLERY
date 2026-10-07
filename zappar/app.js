@@ -225,21 +225,22 @@ document.getElementById('sound-toggle').addEventListener('click', (e) => {
 });
 sfx.sync();
 
-// ZapWorks shows its own splash over the page, so the title film can finish
-// behind it. On the first real interaction, restart the film if it already
-// ran past its opening moments (or never started).
-(function () {
-    const kick = () => {
-        const v = document.getElementById('hero-video');
-        if (v && !startScreen.classList.contains('hidden') &&
-            (v.paused || v.ended || v.currentTime > 2.5)) {
-            v.currentTime = 0;
-            v.play().catch(() => {});
-        }
-        window.removeEventListener('pointerdown', kick, true);
-    };
-    window.addEventListener('pointerdown', kick, true);
-})();
+// Our own curtain after ZapWorks' splash: the film and entrance only start
+// on the begin tap, so the opening is always seen
+document.getElementById('begin-gate').addEventListener('click', () => {
+    document.getElementById('begin-gate').classList.add('gone');
+    startScreen.classList.add('revealed');
+    const v = document.getElementById('hero-video');
+    if (v) {
+        v.currentTime = 0;
+        v.play().catch(() => {});
+    }
+    const amb = document.getElementById('ambience');
+    if (sfx.on && amb) {
+        amb.currentTime = 0;
+        amb.play().catch(() => {});
+    }
+}, { once: true });
 
 // One delegated, subtle tap sound for every tactile control
 document.addEventListener('click', (e) => {
@@ -387,9 +388,28 @@ document.getElementById('search-toggle').addEventListener('click', () => {
 
 const galleryToggle = document.getElementById('gallery-toggle');
 galleryToggle.addEventListener('click', () => {
+    artGallery.classList.remove('peek');
     artGallery.classList.toggle('open');
     galleryToggle.classList.toggle('active', artGallery.classList.contains('open'));
 });
+
+// After hanging, the strip drops to a sliver so the wall stays visible;
+// swipe up on it (or tap it) to bring it back, swipe down to tuck it away
+const stripSwipe = { y: 0 };
+artGallery.addEventListener('touchstart', (e) => {
+    stripSwipe.y = e.touches[0].clientY;
+}, { passive: true });
+artGallery.addEventListener('touchmove', (e) => {
+    const dy = e.touches[0].clientY - stripSwipe.y;
+    if (dy > 26) artGallery.classList.add('peek');
+    else if (dy < -26) artGallery.classList.remove('peek');
+}, { passive: true });
+artGallery.addEventListener('click', (e) => {
+    if (artGallery.classList.contains('peek')) {
+        e.stopPropagation();
+        artGallery.classList.remove('peek');
+    }
+}, true);
 
 document.getElementById('buy-btn').addEventListener('click', () => {
     shareSheet.classList.remove('active');
@@ -803,6 +823,7 @@ function placeArtwork() {
 
         sfx.hang();
         hideHint();
+        artGallery.classList.add('peek');
         showStatus(`Hung: ${placingArt.title} — drag to fine-tune`);
         if (measurementMode) updateMeasurement();
     });
@@ -897,6 +918,7 @@ async function searchArt(query = null) {
 
         artworks = artworksData;
         displayArtGallery();
+        artGallery.classList.remove('peek');
         artGallery.classList.add('open');
         document.getElementById('gallery-toggle').classList.add('active');
         searchPanel.classList.remove('open');
