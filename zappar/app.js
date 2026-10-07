@@ -491,6 +491,9 @@ function chooseTracking() {
                 anchored = true;
                 setPlacing(false);
                 hideHint();
+                // Their place button has done its job; it never reappears
+                // mid-session (re-placing is only offered while no art hangs)
+                worldGroup.showPlaceButton = false;
                 sfx.anchor();
                 showStatus('Wall locked — tap artwork in the strip to hang it');
                 updateDockButtons();
@@ -500,9 +503,14 @@ function chooseTracking() {
                 }
             } else if (!placed && anchored) {
                 if (placedArts.length > 0) {
-                    // A tracking wobble re-opened Zappar's placement mode;
-                    // snap back so the room anchor (and all hung art) holds
-                    try { worldGroup.placementMode = false; } catch (e) { worldGroup._placementMode = false; }
+                    // Tracking wobble: keep Zappar's button suppressed and let
+                    // the tracker recover on its own. Only once it reports
+                    // ready again do we close its placement mode — forcing it
+                    // earlier just made the UI flicker.
+                    worldGroup.showPlaceButton = false;
+                    if (worldGroup.ready === true) {
+                        try { worldGroup.placementMode = false; } catch (e) { worldGroup._placementMode = false; }
+                    }
                 } else {
                     anchored = false;
                     setPlacing(true);
