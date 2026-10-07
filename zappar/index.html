@@ -1338,6 +1338,13 @@
             pointer-events: auto !important;
         }
 
+        /* During world-tracking placement Zappar shows its own scan/place UI
+           at the bottom; our dock and strip hide so they never collide */
+        #ui-overlay.placing #bottom-dock,
+        #ui-overlay.placing #art-gallery {
+            display: none;
+        }
+
         /* Compact bottom dock */
         #bottom-dock {
             position: absolute;
@@ -1537,7 +1544,9 @@
         <a-entity zappar-permissions-ui id="permissions"></a-entity>
         <a-entity zappar-compatibility-ui id="compatibility"></a-entity>
         <a-entity camera zappar-camera id="z-camera"></a-entity>
-        <a-entity id="instant-anchor" zappar-instant="placement-mode: true; anchor-pose-offset: 0 0 -3"></a-entity>
+        <a-entity id="world-anchor"
+                  zappar-user-placement="placeOnPlanes: true; placeOnGround: false; showInitializationUI: true; visualizePlanesDuringPlacement: true; showPlaceButton: true; placeButtonText: Place on this wall; showRestartPlacementButton: false"></a-entity>
+        <a-entity id="instant-anchor" zappar-instant="placement-mode: true; enabled: false; anchor-pose-offset: 0 0 -3"></a-entity>
     </a-scene>
 
     <div id="canvas-container" class="hidden">
