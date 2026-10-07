@@ -40,8 +40,6 @@ let gesturesWired = false;
 let trackingMode = 'instant';   // 'world' (plane detection) or 'instant' fallback
 let worldGroup = null;          // Zappar UserPlacementAnchorGroup in world mode
 let cameraPaused = false;
-let placeGateOpen = false;      // scan-first: Place button hidden until the gate opens
-let scanGateUntil = 0;
 let anchored = false;
 let placedArts = [];            // every hung artwork mesh, each its own fixture
 let selectedPlaced = null;      // picture the size/drag/remove controls act on
@@ -138,6 +136,20 @@ const measurementDisplay = document.getElementById('measurement-display');
 const shareSheet = document.getElementById('share-sheet');
 
 
+function fadeAudio(a, target, ms, done) {
+    if (!a) { if (done) done(); return; }
+    const from = a.volume;
+    const t0 = performance.now();
+    cancelAnimationFrame(a._fade);
+    const step = (t) => {
+        const k = Math.min(1, (t - t0) / ms);
+        a.volume = Math.max(0, Math.min(1, from + (target - from) * k));
+        if (k < 1) a._fade = requestAnimationFrame(step);
+        else if (done) done();
+    };
+    a._fade = requestAnimationFrame(step);
+}
+
 // — Sound: title ambience + synthesized UI effects (persisted toggle) —
 const sfx = (() => {
     let ctx = null;
@@ -196,8 +208,12 @@ const sfx = (() => {
         if (b) b.textContent = on ? '🔊' : '🔇';
         const a = document.getElementById('ambience');
         if (a) {
-            a.volume = 0.35;
-            if (on) a.play().catch(() => {}); else a.pause();
+            if (on) {
+                if (a.paused) { a.volume = 0; a.play().catch(() => {}); }
+                fadeAudio(a, 0.35, 1200);
+            } else {
+                fadeAudio(a, 0, 600, () => a.pause());
+            }
         }
     }
 
@@ -238,7 +254,9 @@ document.getElementById('begin-gate').addEventListener('click', () => {
     const amb = document.getElementById('ambience');
     if (sfx.on && amb) {
         amb.currentTime = 0;
+        amb.volume = 0;
         amb.play().catch(() => {});
+        fadeAudio(amb, 0.35, 1200);
     }
 }, { once: true });
 
@@ -331,44 +349,17 @@ document.getElementById('measure-btn').addEventListener('click', () => {
 
 document.getElementById('screenshot-btn').addEventListener('click', takeScreenshot);
 
-// 📍 before anything is hung: re-choose the room anchor.
-// 🗑 once pictures exist: remove the selected picture.
-function updateDockButtons() {
-    const btn = document.getElementById('replace-btn');
-    if (anchored && placedArts.length > 0) {
-        btn.textContent = '🗑';
-        btn.title = 'Remove picture';
-    } else {
-        btn.textContent = '📍';
-        btn.title = 'Move wall';
-    }
-}
+function updateDockButtons() { /* dock is static now: 🗑 removes the selected picture */ }
 
 document.getElementById('replace-btn').addEventListener('click', () => {
-    if (anchored && placedArts.length > 0) {
-        const m = selectedPlaced;
-        if (!m) {
-            showStatus('Tap a picture to select it, then 🗑 removes it');
-            return;
-        }
-        removePicture(m);
-        showStatus('Removed');
+    if (!selectedPlaced) {
+        showStatus(placedArts.length
+            ? 'Tap a picture to select it, then 🗑 removes it'
+            : 'Hang artwork from the strip first');
         return;
     }
-    if (trackingMode === 'world' && worldGroup) {
-        try { worldGroup.placementMode = true; } catch (e) { worldGroup._placementMode = true; }
-        anchored = false;
-        // The room is already mapped — just a short settle before placing
-        worldGroup.showPlaceButton = false;
-        placeGateOpen = false;
-        scanGateUntil = Date.now() + 2000;
-        setHint('Aim at your wall…');
-        return;
-    }
-    if (!anchorEl) return;
-    anchorEl.setAttribute('zappar-instant', 'placementMode', true);
-    anchored = false;
-    showStatus('Point at your wall, then tap to re-place the gallery');
+    removePicture(selectedPlaced);
+    showStatus('Removed');
 });
 
 document.getElementById('clear-btn').addEventListener('click', () => {
@@ -452,71 +443,37 @@ function setPlacing(active) {
 function chooseTracking() {
     if (anchorEl) return;
     const worldEl = document.getElementById('world-anchor');
-    const wp = worldEl && worldEl.components['zappar-user-placement'];
+    const wp = worldEl && worldEl.components['zappar-world-placement'];
     if (wp && wp.placementGroup) {
         trackingMode = 'world';
         worldGroup = wp.placementGroup;
-        worldGroup.longPressToMove = false;
         anchorEl = worldEl;
         setPlacing(true);
+        setHint('Pan slowly across your room so it gets mapped…');
 
-        // Walls matter most: vertical plane detection is off by default
-        try {
-            if (wp.tracker && wp.tracker.verticalPlaneDetectionSupported) {
-                wp.tracker.verticalPlaneDetectionEnabled = true;
-                console.log('wall (vertical plane) detection enabled');
-            } else {
-                console.log('vertical plane detection not supported on this device');
-            }
-        } catch (e) { console.log('vertical plane detection unavailable'); }
-
-        // Scan-first: keep the Place button hidden for a few seconds so the
-        // tracker maps more of the room (especially walls) before placing
-        worldGroup.showPlaceButton = false;
-        placeGateOpen = false;
-        scanGateUntil = Date.now() + 7000;
-        setHint('Pan slowly across your walls so the room gets mapped…');
-        // Mirror Zappar's placement state onto the app's anchored flag
-        setInterval(() => {
-            if (!placeGateOpen && Date.now() >= scanGateUntil) {
-                placeGateOpen = true;
-                worldGroup.showPlaceButton = true;
-                setHint(null);
-                showStatus('Aim at your wall, then tap "Place on this wall"');
-            }
-            // Placed = tracker initialized AND the user confirmed a location;
-            // _placementMode is false before init too, so gate on ready
-            const placed = worldGroup.ready === true && worldGroup._placementMode === false;
-            if (placed && !anchored) {
+        // Warm-up: give the world tracker a few seconds of scanning, then
+        // hanging is live — no confirm button, tap art and it is fixed there
+        const t0 = Date.now();
+        const warm = setInterval(() => {
+            let trackerReady = false;
+            try {
+                trackerReady = worldGroup.ready === true ||
+                    (worldGroup.worldTracker && worldGroup.worldTracker.ready === true);
+            } catch (e) {}
+            const elapsed = Date.now() - t0;
+            if ((trackerReady && elapsed > 3500) || elapsed > 8000) {
+                clearInterval(warm);
                 anchored = true;
                 setPlacing(false);
                 hideHint();
-                // Their place button has done its job; it never reappears
-                // mid-session (re-placing is only offered while no art hangs)
-                worldGroup.showPlaceButton = false;
                 sfx.anchor();
-                showStatus('Wall locked — tap artwork in the strip to hang it');
-                updateDockButtons();
+                showStatus('Room mapped — tap artwork in the strip to hang it');
                 if (pendingTemplate) {
                     buildTemplate(pendingTemplate);
                     pendingTemplate = null;
                 }
-            } else if (!placed && anchored) {
-                if (placedArts.length > 0) {
-                    // Tracking wobble: keep Zappar's button suppressed and let
-                    // the tracker recover on its own. Only once it reports
-                    // ready again do we close its placement mode — forcing it
-                    // earlier just made the UI flicker.
-                    worldGroup.showPlaceButton = false;
-                    if (worldGroup.ready === true) {
-                        try { worldGroup.placementMode = false; } catch (e) { worldGroup._placementMode = false; }
-                    }
-                } else {
-                    anchored = false;
-                    setPlacing(true);
-                }
             }
-        }, 400);
+        }, 300);
     } else {
         trackingMode = 'instant';
         anchorEl = document.getElementById('instant-anchor');
@@ -542,7 +499,7 @@ async function initAR() {
     const heroVideo = document.getElementById('hero-video');
     if (heroVideo) heroVideo.pause();
     const amb = document.getElementById('ambience');
-    if (amb) amb.pause();
+    if (amb) fadeAudio(amb, 0, 900, () => amb.pause());
 
     if (cameraPaused) {
         const cam = getZapparCamera();
@@ -1245,7 +1202,9 @@ function exitAR() {
         const amb = document.getElementById('ambience');
         if (sfx.on && amb) {
             amb.currentTime = 0;
+            amb.volume = 0;
             amb.play().catch(() => {});
+            fadeAudio(amb, 0.35, 1200);
         }
         return;
     }

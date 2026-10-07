@@ -1736,6 +1736,20 @@
         const measurementDisplay = document.getElementById('measurement-display');
         const shareSheet = document.getElementById('share-sheet');
 
+        function fadeAudio(a, target, ms, done) {
+            if (!a) { if (done) done(); return; }
+            const from = a.volume;
+            const t0 = performance.now();
+            cancelAnimationFrame(a._fade);
+            const step = (t) => {
+                const k = Math.min(1, (t - t0) / ms);
+                a.volume = Math.max(0, Math.min(1, from + (target - from) * k));
+                if (k < 1) a._fade = requestAnimationFrame(step);
+                else if (done) done();
+            };
+            a._fade = requestAnimationFrame(step);
+        }
+
         // — Sound: title ambience + synthesized UI effects (persisted toggle) —
         const sfx = (() => {
             let ctx = null;
@@ -1794,8 +1808,12 @@
                 if (b) b.textContent = on ? '🔊' : '🔇';
                 const a = document.getElementById('ambience');
                 if (a) {
-                    a.volume = 0.35;
-                    if (on) a.play().catch(() => {}); else a.pause();
+                    if (on) {
+                        if (a.paused) { a.volume = 0; a.play().catch(() => {}); }
+                        fadeAudio(a, 0.35, 1200);
+                    } else {
+                        fadeAudio(a, 0, 600, () => a.pause());
+                    }
                 }
             }
 
@@ -1986,7 +2004,7 @@
             const heroVideo = document.getElementById('hero-video');
             if (heroVideo) heroVideo.pause();
             const amb = document.getElementById('ambience');
-            if (amb) amb.pause();
+            if (amb) fadeAudio(amb, 0, 900, () => amb.pause());
 
             try {
                 if (xrSupported) {
@@ -2690,7 +2708,9 @@
             const amb = document.getElementById('ambience');
             if (sfx.on && amb) {
                 amb.currentTime = 0;
+                amb.volume = 0;
                 amb.play().catch(() => {});
+                fadeAudio(amb, 0.35, 1200);
             }
         }
 
