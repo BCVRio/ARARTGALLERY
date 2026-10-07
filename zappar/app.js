@@ -38,6 +38,8 @@ let sceneEl = null;
 let anchorEl = null;
 let galleryGroup = null;        // THREE.Group that holds artwork meshes
 let gesturesWired = false;
+let trackingMode = 'instant';   // 'world' (plane detection) or 'instant' fallback
+let worldGroup = null;          // Zappar UserPlacementAnchorGroup in world mode
 let anchored = false;
 let currentArtwork = null;      // primary mesh (single placement)
 let templateMeshes = [];        // meshes placed by a room template
@@ -179,6 +181,12 @@ document.getElementById('measure-btn').addEventListener('click', () => {
 document.getElementById('screenshot-btn').addEventListener('click', takeScreenshot);
 
 document.getElementById('replace-btn').addEventListener('click', () => {
+    if (trackingMode === 'world' && worldGroup) {
+        try { worldGroup.placementMode = true; } catch (e) { worldGroup._placementMode = true; }
+        anchored = false;
+        showStatus('Scan the wall, then press "Place on this wall"');
+        return;
+    }
     if (!anchorEl) return;
     anchorEl.setAttribute('zappar-instant', 'placementMode', true);
     anchored = false;
@@ -225,9 +233,51 @@ document.addEventListener('click', (e) => {
 // The scene lives in the page from load (Zappar's reference pattern), so
 // bind to it immediately; this script runs at the end of <body>
 sceneEl = document.querySelector('a-scene');
-anchorEl = document.getElementById('instant-anchor');
 galleryGroup = new THREE.Group();
-anchorEl.object3D.add(galleryGroup);
+
+// Prefer Zappar world tracking (real plane detection, ~absolute scale); fall
+// back to instant tracking on devices where the world tracker fails to start
+function setPlacing(active) {
+    document.getElementById('ui-overlay').classList.toggle('placing', active);
+}
+
+function chooseTracking() {
+    if (anchorEl) return;
+    const worldEl = document.getElementById('world-anchor');
+    const wp = worldEl && worldEl.components['zappar-user-placement'];
+    if (wp && wp.placementGroup) {
+        trackingMode = 'world';
+        worldGroup = wp.placementGroup;
+        worldGroup.longPressToMove = false;
+        anchorEl = worldEl;
+        setPlacing(true);
+        // Mirror Zappar's placement state onto the app's anchored flag
+        setInterval(() => {
+            // Placed = tracker initialized AND the user confirmed a location;
+            // _placementMode is false before init too, so gate on ready
+            const placed = worldGroup.ready === true && worldGroup._placementMode === false;
+            if (placed && !anchored) {
+                anchored = true;
+                setPlacing(false);
+                hideHint();
+                showStatus('Wall locked — tap to hang the art');
+                if (pendingTemplate) {
+                    buildTemplate(pendingTemplate);
+                    pendingTemplate = null;
+                }
+            } else if (!placed && anchored) {
+                anchored = false;
+                setPlacing(true);
+            }
+        }, 400);
+    } else {
+        trackingMode = 'instant';
+        anchorEl = document.getElementById('instant-anchor');
+        anchorEl.setAttribute('zappar-instant', 'enabled', true);
+    }
+    anchorEl.object3D.add(galleryGroup);
+    console.log('tracking mode:', trackingMode);
+}
 
 async function initAR() {
     if (!window.AFRAME || !window.AFRAME.components['zappar-camera']) {
@@ -245,8 +295,10 @@ async function initAR() {
     if (!gesturesWired) {
         gesturesWired = true;
         const wireUp = () => {
+            chooseTracking();
             setupGestures(sceneEl.canvas);
-            showHint();
+            // In world mode Zappar's own scan-and-place UI guides the user
+            if (trackingMode !== 'world') showHint();
             let checks = 0;
             const watchdog = setInterval(() => {
                 checks++;
@@ -364,7 +416,10 @@ function dragGallery(dx, dy) {
 }
 
 function onTap() {
-    if (!anchored) {
+    if (trackingMode === 'world') {
+        // Until the user confirms a wall, taps belong to Zappar's placement UI
+        if (!anchored) return;
+    } else if (!anchored) {
         anchorEl.setAttribute('zappar-instant', 'placementMode', false);
         anchored = true;
         hideHint();
