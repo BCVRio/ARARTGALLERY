@@ -1433,7 +1433,7 @@
         <video id="hero-video" autoplay muted playsinline poster="assets/hero-bg.jpg">
             <source src="assets/brand/title-loop.mp4" type="video/mp4">
         </video>
-        <audio id="ambience" loop preload="none" src="assets/brand/ambience.m4a"></audio>
+        <audio id="ambience" preload="none" src="assets/brand/ambience.m4a"></audio>
         <button id="sound-toggle" class="sound-toggle" title="Sound">🔇</button>
         <!-- CSS Animated Background -->
         <div class="animated-background">
@@ -1846,6 +1846,20 @@
         });
         sfx.sync();
 
+        // Restart the title film on first interaction if it ran unseen
+        (function () {
+            const kick = () => {
+                const v = document.getElementById('hero-video');
+                if (v && !startScreen.classList.contains('hidden') &&
+                    (v.paused || v.ended || v.currentTime > 2.5)) {
+                    v.currentTime = 0;
+                    v.play().catch(() => {});
+                }
+                window.removeEventListener('pointerdown', kick, true);
+            };
+            window.addEventListener('pointerdown', kick, true);
+        })();
+
         // One delegated, subtle tap sound for every tactile control
         document.addEventListener('click', (e) => {
             if (e.target.closest('.dock-btn, .top-btn, .hero-cta, #search-btn, .btn-primary, .filter-chip, .share-option, .art-item, .template-card, .favorite-card')) {
@@ -1994,6 +2008,8 @@
 
             const heroVideo = document.getElementById('hero-video');
             if (heroVideo) heroVideo.pause();
+            const amb = document.getElementById('ambience');
+            if (amb) amb.pause();
 
             try {
                 if (xrSupported) {
@@ -2693,6 +2709,11 @@
             if (heroVideo) {
                 heroVideo.currentTime = 0;
                 heroVideo.play().catch(() => {});
+            }
+            const amb = document.getElementById('ambience');
+            if (sfx.on && amb) {
+                amb.currentTime = 0;
+                amb.play().catch(() => {});
             }
         }
 
