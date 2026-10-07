@@ -1,10 +1,9 @@
-// AR Art Gallery Pro — Zappar Universal AR edition (A-Frame + zappar-instant)
+// AR Art Gallery Pro — Zappar Universal AR edition (A-Frame)
 //
-// Tracking model: a single zappar-instant anchor starts in placement mode
-// (content follows the camera); the first tap anchors it to the world via
-// Zappar's instant world tracking. All artwork lives in #gallery-group
-// inside the anchor, so drag/pinch/template layouts are plain local-space
-// transforms and everything stays anchored together.
+// Tracking model: one world-tracked room anchor (zappar-user-placement,
+// instant tracking as fallback). Every hung picture is an independent
+// fixture expressed in anchor-local space, so multiple artworks can sit
+// on different walls at once and all stay locked to the room together.
 
 // On-device diagnostics: open the page with ?debug=1 to see a live log
 // overlay (errors, warnings, AR pipeline state) without remote debugging
@@ -44,12 +43,11 @@ let cameraPaused = false;
 let placeGateOpen = false;      // scan-first: Place button hidden until the gate opens
 let scanGateUntil = 0;
 let anchored = false;
-let currentArtwork = null;      // primary mesh (single placement)
-let templateMeshes = [];        // meshes placed by a room template
+let placedArts = [];            // every hung artwork mesh, each its own fixture
+let selectedPlaced = null;      // picture the size/drag/remove controls act on
 let pendingTemplate = null;     // template waiting for a wall tap
 let artworks = [];
 let selectedArt = null;
-let currentScale = 1;
 let favorites = JSON.parse(localStorage.getItem('artFavorites') || '[]');
 let measurementMode = false;
 let currentSource = 'museum';
@@ -154,20 +152,25 @@ document.querySelectorAll('.filter-chip').forEach(chip => {
     });
 });
 
+function activePicture() {
+    return selectedPlaced || placedArts[placedArts.length - 1] || null;
+}
+
+function scalePicture(mesh, factor) {
+    const next = Math.min(10, Math.max(0.1, mesh.userData.scale * factor));
+    mesh.userData.scale = next;
+    mesh.scale.set(next, next, 1);
+    updateMeasurement();
+}
+
 document.getElementById('size-up').addEventListener('click', () => {
-    if (galleryGroup) {
-        currentScale *= 1.2;
-        galleryGroup.scale.set(currentScale, currentScale, currentScale);
-        updateMeasurement();
-    }
+    const m = activePicture();
+    if (m) scalePicture(m, 1.2);
 });
 
 document.getElementById('size-down').addEventListener('click', () => {
-    if (galleryGroup) {
-        currentScale *= 0.8;
-        galleryGroup.scale.set(currentScale, currentScale, currentScale);
-        updateMeasurement();
-    }
+    const m = activePicture();
+    if (m) scalePicture(m, 0.8);
 });
 
 document.getElementById('measure-btn').addEventListener('click', () => {
@@ -183,7 +186,30 @@ document.getElementById('measure-btn').addEventListener('click', () => {
 
 document.getElementById('screenshot-btn').addEventListener('click', takeScreenshot);
 
+// 📍 before anything is hung: re-choose the room anchor.
+// 🗑 once pictures exist: remove the selected picture.
+function updateDockButtons() {
+    const btn = document.getElementById('replace-btn');
+    if (anchored && placedArts.length > 0) {
+        btn.textContent = '🗑';
+        btn.title = 'Remove picture';
+    } else {
+        btn.textContent = '📍';
+        btn.title = 'Move wall';
+    }
+}
+
 document.getElementById('replace-btn').addEventListener('click', () => {
+    if (anchored && placedArts.length > 0) {
+        const m = selectedPlaced;
+        if (!m) {
+            showStatus('Tap a picture to select it, then 🗑 removes it');
+            return;
+        }
+        removePicture(m);
+        showStatus('Removed');
+        return;
+    }
     if (trackingMode === 'world' && worldGroup) {
         try { worldGroup.placementMode = true; } catch (e) { worldGroup._placementMode = true; }
         anchored = false;
@@ -198,6 +224,13 @@ document.getElementById('replace-btn').addEventListener('click', () => {
     anchorEl.setAttribute('zappar-instant', 'placementMode', true);
     anchored = false;
     showStatus('Point at your wall, then tap to re-place the gallery');
+});
+
+document.getElementById('clear-btn').addEventListener('click', () => {
+    shareSheet.classList.remove('active');
+    clearGallery();
+    updateDockButtons();
+    showStatus('All pictures removed');
 });
 
 document.getElementById('more-btn').addEventListener('click', () => {
@@ -294,7 +327,8 @@ function chooseTracking() {
                 anchored = true;
                 setPlacing(false);
                 hideHint();
-                showStatus('Wall locked — tap to hang the art');
+                showStatus('Wall locked — tap to hang art, tap a picture to select it');
+                updateDockButtons();
                 if (pendingTemplate) {
                     buildTemplate(pendingTemplate);
                     pendingTemplate = null;
@@ -363,16 +397,34 @@ async function initAR() {
     }
 }
 
-// Tap anchors the gallery to the world (and places the selected artwork);
-// drag moves the artwork across the wall; pinch resizes it
+// Tap empty space hangs the selected artwork where you aim; tap a hung
+// picture to select it; drag moves that picture, pinch resizes it
 const touchState = {
     mode: null,
     lastX: 0,
     lastY: 0,
     moved: false,
     startDist: 0,
-    startScale: 1
+    startScale: 1,
+    target: null
 };
+
+const raycaster = new THREE.Raycaster();
+
+function pictureAt(clientX, clientY) {
+    if (placedArts.length === 0) return null;
+    const ndc = new THREE.Vector2(
+        (clientX / window.innerWidth) * 2 - 1,
+        -(clientY / window.innerHeight) * 2 + 1
+    );
+    galleryGroup.updateMatrixWorld(true);
+    raycaster.setFromCamera(ndc, sceneEl.camera);
+    const hits = raycaster.intersectObjects(placedArts, true);
+    if (hits.length === 0) return null;
+    let o = hits[0].object;
+    while (o && !o.userData.art) o = o.parent;
+    return o;
+}
 
 function setupGestures(canvas) {
     const touchDistance = (touches) => Math.hypot(
@@ -386,29 +438,33 @@ function setupGestures(canvas) {
             touchState.lastX = e.touches[0].clientX;
             touchState.lastY = e.touches[0].clientY;
             touchState.moved = false;
+            touchState.target = pictureAt(e.touches[0].clientX, e.touches[0].clientY);
         } else if (e.touches.length === 2) {
             touchState.mode = 'pinch';
             touchState.startDist = touchDistance(e.touches);
-            touchState.startScale = currentScale;
+            touchState.target = touchState.target || selectedPlaced;
+            touchState.startScale = touchState.target ? touchState.target.userData.scale : 1;
         }
     }, { passive: false });
 
     canvas.addEventListener('touchmove', (e) => {
         e.preventDefault();
 
-        if (touchState.mode === 'drag' && e.touches.length === 1 && hasArt()) {
+        const dragTarget = touchState.target || selectedPlaced;
+        if (touchState.mode === 'drag' && e.touches.length === 1 && dragTarget) {
             const dx = e.touches[0].clientX - touchState.lastX;
             const dy = e.touches[0].clientY - touchState.lastY;
             touchState.lastX = e.touches[0].clientX;
             touchState.lastY = e.touches[0].clientY;
 
             if (Math.abs(dx) > 2 || Math.abs(dy) > 2) touchState.moved = true;
-            dragGallery(dx, dy);
-        } else if (touchState.mode === 'pinch' && e.touches.length === 2 && hasArt()) {
+            dragPicture(dragTarget, dx, dy);
+        } else if (touchState.mode === 'pinch' && e.touches.length === 2 && dragTarget) {
             touchState.moved = true;
             const ratio = touchDistance(e.touches) / touchState.startDist;
-            currentScale = Math.min(10, Math.max(0.1, touchState.startScale * ratio));
-            galleryGroup.scale.set(currentScale, currentScale, currentScale);
+            const next = Math.min(10, Math.max(0.1, touchState.startScale * ratio));
+            dragTarget.userData.scale = next;
+            dragTarget.scale.set(next, next, 1);
             updateMeasurement();
         }
     }, { passive: false });
@@ -416,32 +472,51 @@ function setupGestures(canvas) {
     canvas.addEventListener('touchend', (e) => {
         if (e.touches.length === 0) {
             if (touchState.mode === 'drag' && !touchState.moved) {
-                onTap();
+                onTap(touchState.target);
             }
             touchState.mode = null;
+            touchState.target = null;
         }
     });
 
     // Desktop browsers (Zappar supports webcam preview for quick testing)
     if (!('ontouchstart' in window)) {
-        canvas.addEventListener('click', onTap);
+        canvas.addEventListener('click', (e) => onTap(pictureAt(e.clientX, e.clientY)));
     }
 }
 
 function hasArt() {
-    return currentArtwork || templateMeshes.length > 0;
+    return placedArts.length > 0;
 }
 
-function dragGallery(dx, dy) {
-    // Convert screen pixels to world units at the gallery's depth, moving in
+// Pose at the point the camera is aiming at, expressed in anchor-local space
+// and kept upright relative to the tracked world (anchor Y ~ gravity up)
+function aimPoseInAnchor(distance) {
+    const cam = sceneEl.camera;
+    cam.updateMatrixWorld();
+    anchorEl.object3D.updateMatrixWorld();
+
+    const inv = new THREE.Matrix4().copy(anchorEl.object3D.matrixWorld).invert();
+    const camPos = new THREE.Vector3().setFromMatrixPosition(cam.matrixWorld).applyMatrix4(inv);
+    const dir = new THREE.Vector3(0, 0, -1).transformDirection(cam.matrixWorld)
+        .transformDirection(inv).normalize();
+
+    const pos = camPos.clone().addScaledVector(dir, distance || 2);
+    const yaw = Math.atan2(camPos.x - pos.x, camPos.z - pos.z);
+    const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0));
+    return { pos, quat };
+}
+
+function dragPicture(mesh, dx, dy) {
+    // Convert screen pixels to world units at the picture's depth, moving in
     // the camera's view plane, then express that delta in anchor-local space
     const cam = sceneEl.camera;
     const camWorld = new THREE.Vector3();
     cam.getWorldPosition(camWorld);
-    const groupWorld = new THREE.Vector3();
-    galleryGroup.getWorldPosition(groupWorld);
+    const meshWorld = new THREE.Vector3();
+    mesh.getWorldPosition(meshWorld);
 
-    const depth = groupWorld.distanceTo(camWorld) || 3;
+    const depth = meshWorld.distanceTo(camWorld) || 3;
     const worldPerPixel = (2 * depth * Math.tan(THREE.MathUtils.degToRad(cam.fov / 2))) / window.innerHeight;
 
     const delta = new THREE.Vector3()
@@ -453,10 +528,35 @@ function dragGallery(dx, dy) {
     anchorEl.object3D.getWorldQuaternion(anchorQuat);
     delta.applyQuaternion(anchorQuat.invert());
 
-    galleryGroup.position.add(delta);
+    mesh.position.add(delta);
 }
 
-function onTap() {
+function setSelectedPicture(mesh) {
+    if (selectedPlaced && selectedPlaced.userData.frame) {
+        selectedPlaced.userData.frame.material.color.setHex(0x8c6a1f);
+    }
+    selectedPlaced = mesh;
+    if (mesh && mesh.userData.frame) {
+        mesh.userData.frame.material.color.setHex(0xf5d87a);
+    }
+    if (measurementMode) updateMeasurement();
+}
+
+function removePicture(mesh) {
+    galleryGroup.remove(mesh);
+    if (mesh.userData.frame) {
+        mesh.userData.frame.geometry.dispose();
+        mesh.userData.frame.material.dispose();
+    }
+    mesh.geometry.dispose();
+    if (mesh.material.map) mesh.material.map.dispose();
+    mesh.material.dispose();
+    placedArts = placedArts.filter(m => m !== mesh);
+    if (selectedPlaced === mesh) selectedPlaced = null;
+    updateDockButtons();
+}
+
+function onTap(target) {
     if (trackingMode === 'world') {
         // Until the user confirms a wall, taps belong to Zappar's placement UI
         if (!anchored) return;
@@ -464,7 +564,14 @@ function onTap() {
         anchorEl.setAttribute('zappar-instant', 'placementMode', false);
         anchored = true;
         hideHint();
-        showStatus('Anchored — the art is pinned to your wall');
+        showStatus('Anchored — tap to hang art, tap a picture to select it');
+        updateDockButtons();
+    }
+
+    if (target) {
+        setSelectedPicture(target);
+        showStatus(`Selected: ${target.userData.art.title}`);
+        return;
     }
 
     if (pendingTemplate) {
@@ -477,18 +584,7 @@ function onTap() {
 }
 
 function clearGallery() {
-    const disposeMesh = (mesh) => {
-        galleryGroup.remove(mesh);
-        mesh.geometry.dispose();
-        if (mesh.material.map) mesh.material.map.dispose();
-        mesh.material.dispose();
-    };
-    if (currentArtwork) {
-        disposeMesh(currentArtwork);
-        currentArtwork = null;
-    }
-    templateMeshes.forEach(disposeMesh);
-    templateMeshes = [];
+    placedArts.slice().forEach(removePicture);
 }
 
 function loadArtTexture(art, onLoad) {
@@ -514,7 +610,16 @@ function makeArtMesh(texture, width, art) {
     const geometry = new THREE.PlaneGeometry(width, height);
     const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
     const mesh = new THREE.Mesh(geometry, material);
-    mesh.userData = { originalWidth: width, originalHeight: height, art };
+
+    // Slim gold frame behind the canvas; brightens when the picture is selected
+    const frame = new THREE.Mesh(
+        new THREE.PlaneGeometry(width * 1.06, height * 1.06),
+        new THREE.MeshBasicMaterial({ color: 0x8c6a1f, side: THREE.DoubleSide })
+    );
+    frame.position.z = -0.004;
+    mesh.add(frame);
+
+    mesh.userData = { originalWidth: width, originalHeight: height, art, scale: 1, frame };
     return mesh;
 }
 
@@ -525,17 +630,18 @@ function placeArtwork() {
     }
 
     const placingArt = selectedArt;
+    const pose = aimPoseInAnchor(2);
     loadArtTexture(placingArt, (texture) => {
-        clearGallery();
-        currentArtwork = makeArtMesh(texture, 1, placingArt);
-        galleryGroup.add(currentArtwork);
-
-        currentScale = 1;
-        galleryGroup.scale.set(1, 1, 1);
-        galleryGroup.position.set(0, 0, 0);
+        const mesh = makeArtMesh(texture, 1, placingArt);
+        mesh.position.copy(pose.pos);
+        mesh.quaternion.copy(pose.quat);
+        galleryGroup.add(mesh);
+        placedArts.push(mesh);
+        setSelectedPicture(mesh);
+        updateDockButtons();
 
         hideHint();
-        showStatus(`Placed: ${placingArt.title}`);
+        showStatus(`Hung: ${placingArt.title} — drag to fine-tune`);
         if (measurementMode) updateMeasurement();
     });
 }
@@ -547,35 +653,35 @@ function buildTemplate(template) {
         return;
     }
 
-    clearGallery();
-    currentScale = 1;
-    galleryGroup.scale.set(1, 1, 1);
-    galleryGroup.position.set(0, 0, 0);
-
     const w = template.layout === 'center' ? 1.2 : 0.7;
     const spacing = template.spacing;
+    const pose = aimPoseInAnchor(2.2);
     let placedCount = 0;
 
     pieces.forEach((art, i) => {
         loadArtTexture(art, (texture) => {
             const mesh = makeArtMesh(texture, w, art);
 
+            const offset = new THREE.Vector3();
             if (template.layout === 'horizontal' || template.layout === 'triptych') {
-                mesh.position.x = (i - (pieces.length - 1) / 2) * (w + spacing);
+                offset.x = (i - (pieces.length - 1) / 2) * (w + spacing);
             } else if (template.layout === 'grid') {
                 const cols = Math.ceil(pieces.length / 2);
                 const col = i % cols;
                 const row = Math.floor(i / cols);
-                mesh.position.x = (col - (cols - 1) / 2) * (w + spacing);
-                mesh.position.y = row === 0 ? (0.45 + spacing) : -(0.45 + spacing) / 2;
+                offset.x = (col - (cols - 1) / 2) * (w + spacing);
+                offset.y = row === 0 ? (0.45 + spacing) : -(0.45 + spacing) / 2;
             }
-            // 'center' stays at the origin
+            // 'center' stays at the aim point
 
+            mesh.position.copy(pose.pos).add(offset.applyQuaternion(pose.quat));
+            mesh.quaternion.copy(pose.quat);
             galleryGroup.add(mesh);
-            templateMeshes.push(mesh);
+            placedArts.push(mesh);
             placedCount++;
             if (placedCount === pieces.length) {
-                showStatus(`${template.name} placed!`);
+                updateDockButtons();
+                showStatus(`${template.name} hung on this wall!`);
             }
         });
     });
@@ -719,11 +825,11 @@ function updateFavoritesCount() {
 
 function updateMeasurement() {
     if (!measurementMode) return;
-    const primary = currentArtwork || templateMeshes[0];
+    const primary = activePicture();
     if (!primary) return;
 
-    const width = primary.userData.originalWidth * currentScale;
-    const height = primary.userData.originalHeight * currentScale;
+    const width = primary.userData.originalWidth * primary.userData.scale;
+    const height = primary.userData.originalHeight * primary.userData.scale;
 
     const widthInches = (width * 39.37).toFixed(1);
     const heightInches = (height * 39.37).toFixed(1);
@@ -734,7 +840,7 @@ function updateMeasurement() {
         <strong>Artwork Dimensions:</strong><br>
         ${widthInches}" × ${heightInches}" (inches)<br>
         ${widthCm} × ${heightCm} cm
-        <br><small>Note: instant tracking scale is approximate</small>
+        <br><small>AR scale is approximate</small>
     `;
 }
 
@@ -759,7 +865,8 @@ function takeScreenshot() {
 }
 
 function shareToSocial(platform) {
-    const art = selectedArt || (currentArtwork && currentArtwork.userData.art);
+    const sel = activePicture();
+    const art = (sel && sel.userData.art) || selectedArt;
 
     if (!art) {
         showStatus('Please select an artwork first');
@@ -790,7 +897,8 @@ function shareToSocial(platform) {
 }
 
 function openPurchaseLink() {
-    const art = selectedArt || (currentArtwork && currentArtwork.userData.art);
+    const sel = activePicture();
+    const art = (sel && sel.userData.art) || selectedArt;
 
     if (!art) {
         showStatus('Please select an artwork first');
