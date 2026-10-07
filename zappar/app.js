@@ -447,7 +447,7 @@ function chooseTracking() {
     if (wp && wp.placementGroup) {
         trackingMode = 'world';
         worldGroup = wp.placementGroup;
-        worldGroup.longPressToMove = false;
+        worldGroup.longPressToMove = 'none';
         worldGroup.showPlaceButton = false;
         anchorEl = worldEl;
         setPlacing(true);
@@ -479,6 +479,10 @@ function chooseTracking() {
             }
         }, true);
 
+        const removePlaceOverlay = () => {
+            document.querySelectorAll('.zappar-three-place-ui').forEach(el => el.remove());
+        };
+
         const settle = () => {
             settled = true;
             anchored = true;
@@ -487,6 +491,7 @@ function chooseTracking() {
             // Their scan card and button never return; our status line takes
             // over any relocalization messaging
             worldGroup.showPlaceButton = false;
+            removePlaceOverlay();
             try {
                 wp.data.showInitializationUI = false;
                 if (wp.initializationUI) wp.initializationUI.hide();
@@ -500,6 +505,7 @@ function chooseTracking() {
         };
 
         const fallbackToInstant = () => {
+            removePlaceOverlay();
             try { worldGroup.enabled = false; } catch (e) {}
             try {
                 wp.data.showInitializationUI = false;
@@ -558,6 +564,7 @@ function chooseTracking() {
 
             // Settled phase: keep their UI retired and placement pinned shut
             worldGroup.showPlaceButton = false;
+            removePlaceOverlay();
             try {
                 wp.data.showInitializationUI = false;
                 if (wp.initializationUI) wp.initializationUI.hide();
