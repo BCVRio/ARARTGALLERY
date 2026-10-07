@@ -463,19 +463,18 @@ function chooseTracking() {
             }
         } catch (e) { console.log('vertical plane detection unavailable'); }
 
-        // Once the tracker is ready we confirm the anchor ourselves at the
-        // point the user is aiming — no button, tap-the-art-to-place feel —
-        // then keep placement pinned shut (ready-gated, so no flicker fights)
+        // Once the tracker is genuinely ready we confirm the anchor
+        // ourselves at the point the user is aiming — no button. We never
+        // lock in before readiness: doing so hangs art into an un-anchored
+        // frame that floats with the camera.
         const t0 = Date.now();
-        const lockIn = (limited) => {
+        const lockIn = () => {
             try { worldGroup.placementMode = false; } catch (e) { worldGroup._placementMode = false; }
             anchored = true;
             setPlacing(false);
             hideHint();
             sfx.anchor();
-            showStatus(limited
-                ? 'Tracking is limited here — art may drift'
-                : 'Room mapped — tap artwork in the strip to hang it');
+            showStatus('Room mapped — tap artwork in the strip to hang it');
             if (pendingTemplate) {
                 buildTemplate(pendingTemplate);
                 pendingTemplate = null;
@@ -487,16 +486,41 @@ function chooseTracking() {
                 }
             }, 500);
         };
+        const fallbackToInstant = () => {
+            // This room will not world-track right now (light / texture).
+            // Switch to the instant anchor so the session still works.
+            try { worldGroup.enabled = false; } catch (e) {}
+            try {
+                if (wp.initializationUI) {
+                    wp.data.showInitializationUI = false;
+                    wp.initializationUI.hide();
+                }
+            } catch (e) {}
+            if (galleryGroup.parent === anchorEl.object3D) {
+                anchorEl.object3D.remove(galleryGroup);
+            }
+            trackingMode = 'instant';
+            worldGroup = null;
+            anchorEl = document.getElementById('instant-anchor');
+            anchorEl.setAttribute('zappar-instant', 'enabled', true);
+            anchorEl.object3D.add(galleryGroup);
+            anchored = false;
+            setPlacing(false);
+            setHint('Low-light mode — aim at your wall and tap once to set it');
+        };
         const warm = setInterval(() => {
             let ready = false;
             try { ready = worldGroup.ready === true; } catch (e) {}
             const elapsed = Date.now() - t0;
             if (ready && elapsed >= 4000) {
                 clearInterval(warm);
-                lockIn(false);
-            } else if (elapsed > 12000) {
+                lockIn();
+            } else if (elapsed > 25000) {
                 clearInterval(warm);
-                lockIn(true);
+                fallbackToInstant();
+            } else if (elapsed > 12000 && !warm._coached) {
+                warm._coached = true;
+                setHint('Still mapping — step back a little, aim at wall detail; more light helps…');
             }
         }, 300);
     } else {
