@@ -1670,8 +1670,7 @@
         <a-entity zappar-permissions-ui id="permissions"></a-entity>
         <a-entity zappar-compatibility-ui id="compatibility"></a-entity>
         <a-entity camera zappar-camera id="z-camera"></a-entity>
-        <a-entity id="world-anchor"
-                  zappar-user-placement="placeOnPlanes: true; placeOnGround: false; showInitializationUI: true; visualizePlanesDuringPlacement: true; showPlaceButton: true; placeButtonText: Place here; showRestartPlacementButton: false"></a-entity>
+        <a-entity id="world-anchor" zappar-world-placement=""></a-entity>
         <a-entity id="instant-anchor" zappar-instant="placement-mode: true; enabled: false; anchor-pose-offset: 0 0 -3"></a-entity>
     </a-scene>
 
@@ -1710,7 +1709,7 @@
                 <button class="dock-btn" id="gallery-toggle" title="Artworks">🖼</button>
                 <button class="dock-btn" id="size-down" title="Smaller">➖</button>
                 <button class="dock-btn" id="size-up" title="Larger">➕</button>
-                <button class="dock-btn" id="replace-btn" title="Move wall">📍</button>
+                <button class="dock-btn" id="replace-btn" title="Remove picture">🗑</button>
                 <button class="dock-btn" id="screenshot-btn" title="Photo">📸</button>
                 <button class="dock-btn" id="more-btn" title="More">⋯</button>
             </div>
