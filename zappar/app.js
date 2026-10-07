@@ -579,7 +579,7 @@ function displayArtGallery() {
                 ${isFavorite ? '❤️' : '🤍'}
             </div>
             ${art.price ? `<div class="buy-badge">$${art.price}</div>` : ''}
-            <img src="${art.thumbnailUrl}" alt="${art.title}" onerror="this.src='https://placehold.co/200x250?text=Art'">
+            <img crossorigin="anonymous" src="${art.thumbnailUrl}" alt="${art.title}" onerror="this.src='https://placehold.co/200x250?text=Art'">
             <div class="art-item-title">${art.title}</div>
         `;
 
@@ -739,7 +739,7 @@ function loadFavorites() {
         const card = document.createElement('div');
         card.className = 'favorite-card';
         card.innerHTML = `
-            <img src="${art.thumbnailUrl}" alt="${art.title}">
+            <img crossorigin="anonymous" src="${art.thumbnailUrl}" alt="${art.title}">
             <div class="favorite-card-info">
                 <div class="favorite-card-title">${art.title}</div>
                 <div class="favorite-card-artist">${art.artist}</div>
@@ -768,7 +768,7 @@ function loadTemplates() {
             <p>${template.description}</p>
             <div class="template-artworks">
                 ${Array.from({ length: Math.min(template.artworks, 4) }).map((_, i) =>
-                    `<img src="https://picsum.photos/60/60?random=${template.id}-${i}" alt="Preview">`
+                    `<img crossorigin="anonymous" src="https://picsum.photos/60/60?random=${template.id}-${i}" alt="Preview">`
                 ).join('')}
             </div>
         `;
