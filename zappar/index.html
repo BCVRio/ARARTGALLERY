@@ -1476,6 +1476,55 @@
             backdrop-filter: blur(6px);
         }
 
+        /* Begin gate: our own curtain after ZapWorks' splash, so the title
+           film always plays in view */
+        #begin-gate {
+            position: absolute;
+            inset: 0;
+            z-index: 30;
+            background: #060608;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 14px;
+            cursor: pointer;
+            transition: opacity 0.7s ease;
+        }
+        #begin-gate img {
+            width: 110px;
+            height: 110px;
+            border-radius: 50%;
+            box-shadow: 0 10px 40px rgba(212, 175, 55, 0.35);
+        }
+        .begin-title {
+            font-family: 'Playfair Display', Georgia, serif;
+            font-size: 26px;
+            color: #f0dc9c;
+            letter-spacing: 1px;
+        }
+        .begin-tap {
+            color: rgba(255, 248, 230, 0.75);
+            font-size: 13px;
+            letter-spacing: 2.5px;
+            text-transform: uppercase;
+            animation: badgePulse 2s ease-in-out infinite;
+        }
+        #begin-gate.gone {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        /* Entrance choreography holds until the gate lifts */
+        .hero-content > * { animation-play-state: paused; }
+        #start-screen.revealed .hero-content > * { animation-play-state: running; }
+
+        /* Art strip peek: slides down to a sliver so the view (and Zappar's
+           place UI) is clear; swipe or tap brings it back */
+        #art-gallery.open.peek {
+            transform: translateY(calc(100% - 38px));
+        }
+
         /* Zappar's injected scan/place UI, dressed to match the app */
         .zappar-three-place-ui-button {
             background: linear-gradient(135deg, #d4af37 0%, #8c6a1f 100%) !important;
@@ -1511,11 +1560,16 @@
 <body>
     <!-- Start Screen -->
     <div id="start-screen">
-        <video id="hero-video" autoplay muted playsinline poster="assets/hero-bg.jpg">
+        <video id="hero-video" muted playsinline poster="assets/hero-bg.jpg">
             <source src="assets/brand/title-loop.mp4" type="video/mp4">
         </video>
         <audio id="ambience" preload="none" src="assets/brand/ambience.m4a"></audio>
         <button id="sound-toggle" class="sound-toggle" title="Sound">🔇</button>
+        <div id="begin-gate">
+            <img src="assets/brand/logo.jpg" alt="">
+            <div class="begin-title">AR Art Gallery</div>
+            <div class="begin-tap">Tap to begin</div>
+        </div>
         <!-- CSS Animated Background -->
         <div class="animated-background">
             <div class="gradient-orb orb-1"></div>
@@ -1583,29 +1637,6 @@
                 <span>Start AR Experience</span>
                 <span class="cta-arrow">→</span>
             </button>
-
-            <div class="feature-cards">
-                <div class="feature-card">
-                    <div class="feature-icon">🎨</div>
-                    <div class="feature-title">50,000+ Artworks</div>
-                    <div class="feature-desc">Museum collections at your fingertips</div>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">📏</div>
-                    <div class="feature-title">Real Measurements</div>
-                    <div class="feature-desc">See exact dimensions in AR</div>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">❤️</div>
-                    <div class="feature-title">Save Favorites</div>
-                    <div class="feature-desc">Build your dream collection</div>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">🛒</div>
-                    <div class="feature-title">Buy Direct</div>
-                    <div class="feature-desc">Purchase what you love</div>
-                </div>
-            </div>
 
             <div class="tech-badge">
                 <span>✓ World tracking on iPhone &amp; Android</span>
