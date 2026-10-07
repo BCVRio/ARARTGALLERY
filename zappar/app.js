@@ -463,38 +463,47 @@ function chooseTracking() {
             }
         } catch (e) { console.log('vertical plane detection unavailable'); }
 
-        // Once the tracker is genuinely ready we confirm the anchor
-        // ourselves at the point the user is aiming — no button. We never
-        // lock in before readiness: doing so hangs art into an un-anchored
-        // frame that floats with the camera.
+        // Zappar's native scan -> reticle -> place flow does the initial
+        // anchoring (it seeds the world map most reliably); we only gate WHEN
+        // its Place button appears, and retire its UI forever after placing.
         const t0 = Date.now();
-        const lockIn = () => {
-            try { worldGroup.placementMode = false; } catch (e) { worldGroup._placementMode = false; }
+        let buttonShown = false;
+        let sawAiming = false;
+        let placedByButton = false;
+        let settled = false;
+
+        // A real tap on Zappar's own Place button is an unambiguous signal
+        document.addEventListener('click', (e) => {
+            if (e.target.closest && e.target.closest('.zappar-three-place-ui')) {
+                placedByButton = true;
+            }
+        }, true);
+
+        const settle = () => {
+            settled = true;
             anchored = true;
             setPlacing(false);
             hideHint();
+            // Their scan card and button never return; our status line takes
+            // over any relocalization messaging
+            worldGroup.showPlaceButton = false;
+            try {
+                wp.data.showInitializationUI = false;
+                if (wp.initializationUI) wp.initializationUI.hide();
+            } catch (e) {}
             sfx.anchor();
-            showStatus('Room mapped — tap artwork in the strip to hang it');
+            showStatus('Wall locked — tap artwork in the strip to hang it');
             if (pendingTemplate) {
                 buildTemplate(pendingTemplate);
                 pendingTemplate = null;
             }
-            setInterval(() => {
-                worldGroup.showPlaceButton = false;
-                if (worldGroup.ready === true && worldGroup._placementMode !== false) {
-                    try { worldGroup.placementMode = false; } catch (e) { worldGroup._placementMode = false; }
-                }
-            }, 500);
         };
+
         const fallbackToInstant = () => {
-            // This room will not world-track right now (light / texture).
-            // Switch to the instant anchor so the session still works.
             try { worldGroup.enabled = false; } catch (e) {}
             try {
-                if (wp.initializationUI) {
-                    wp.data.showInitializationUI = false;
-                    wp.initializationUI.hide();
-                }
+                wp.data.showInitializationUI = false;
+                if (wp.initializationUI) wp.initializationUI.hide();
             } catch (e) {}
             if (galleryGroup.parent === anchorEl.object3D) {
                 anchorEl.object3D.remove(galleryGroup);
@@ -508,19 +517,53 @@ function chooseTracking() {
             setPlacing(false);
             setHint('Low-light mode — aim at your wall and tap once to set it');
         };
-        const warm = setInterval(() => {
+
+        const poll = setInterval(() => {
             let ready = false;
             try { ready = worldGroup.ready === true; } catch (e) {}
             const elapsed = Date.now() - t0;
-            if (ready && elapsed >= 4000) {
-                clearInterval(warm);
-                lockIn();
-            } else if (elapsed > 25000) {
-                clearInterval(warm);
-                fallbackToInstant();
-            } else if (elapsed > 12000 && !warm._coached) {
-                warm._coached = true;
-                setHint('Still mapping — step back a little, aim at wall detail; more light helps…');
+
+            if (!settled) {
+                // Scanning / aiming phase
+                if (ready && !buttonShown && elapsed >= 3000) {
+                    buttonShown = true;
+                    worldGroup.showPlaceButton = true;
+                    setHint(null);
+                    showStatus('Aim at your wall, then tap "Place here"');
+                }
+                if (buttonShown && ready && worldGroup._placementMode === true) {
+                    sawAiming = true;
+                }
+                // Placed only on a genuine aiming -> placed transition or a
+                // real tap on their button — a placementMode that simply
+                // never rose must not read as already-placed
+                const placed = buttonShown && ready &&
+                    worldGroup._placementMode === false &&
+                    (sawAiming || placedByButton);
+                if (placed) {
+                    settle();
+                    return;
+                }
+                if (!ready && elapsed > 25000 && placedArts.length === 0) {
+                    clearInterval(poll);
+                    fallbackToInstant();
+                    return;
+                }
+                if (!ready && elapsed > 12000 && !poll._coached) {
+                    poll._coached = true;
+                    setHint('Still mapping — step back a little, aim at wall detail; more light helps…');
+                }
+                return;
+            }
+
+            // Settled phase: keep their UI retired and placement pinned shut
+            worldGroup.showPlaceButton = false;
+            try {
+                wp.data.showInitializationUI = false;
+                if (wp.initializationUI) wp.initializationUI.hide();
+            } catch (e) {}
+            if (ready && worldGroup._placementMode !== false) {
+                try { worldGroup.placementMode = false; } catch (e) { worldGroup._placementMode = false; }
             }
         }, 300);
     } else {
