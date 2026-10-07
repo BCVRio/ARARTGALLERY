@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>AR Art Gallery Pro - Virtual Wall Art</title>
+    <link rel="icon" type="image/png" href="assets/brand/app-icon.png">
+    <link rel="apple-touch-icon" href="assets/brand/app-icon.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;0,900;1,400;1,600&display=swap" rel="stylesheet">
@@ -1370,11 +1372,69 @@
             top: auto;
             bottom: calc(146px + env(safe-area-inset-bottom, 0px));
         }
+
+        /* — Living title screen: Higgsfield ambient loop + entrance choreography — */
+        #hero-video {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: 0;
+        }
+
+        /* The video supersedes the CSS-animated decor */
+        .gradient-orb, .particle-field, .scan-lines, .floating-frames { display: none; }
+
+        .logo-mark {
+            width: 96px;
+            height: 96px;
+            border-radius: 50%;
+            margin-bottom: 16px;
+            box-shadow: 0 10px 36px rgba(212, 175, 55, 0.35);
+        }
+
+        .hero-content { animation: none; }
+        .hero-content > * { animation: fadeInUp 0.7s ease-out both; }
+        .logo-mark { animation-delay: 0.1s; }
+        .hero-title { animation-delay: 0.25s; }
+        .hero-description { animation-delay: 0.4s; }
+        .hero-cta { animation-delay: 0.55s; }
+        .feature-cards { animation-delay: 0.7s; }
+        .tech-badge { animation-delay: 0.85s; }
+
+        .sound-toggle {
+            position: absolute;
+            top: calc(14px + env(safe-area-inset-top, 0px));
+            right: 14px;
+            z-index: 20;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: rgba(6, 6, 8, 0.55);
+            border: 1px solid rgba(212, 175, 55, 0.4);
+            color: white;
+            font-size: 17px;
+            cursor: pointer;
+            backdrop-filter: blur(6px);
+        }
+
+        .template-preview {
+            width: 100%;
+            height: 120px;
+            object-fit: cover;
+            border-radius: 8px;
+        }
     </style>
 </head>
 <body>
     <!-- Start Screen -->
     <div id="start-screen">
+        <video id="hero-video" autoplay muted playsinline poster="assets/hero-bg.jpg">
+            <source src="assets/brand/title-loop.mp4" type="video/mp4">
+        </video>
+        <audio id="ambience" loop preload="none" src="assets/brand/ambience.m4a"></audio>
+        <button id="sound-toggle" class="sound-toggle" title="Sound">🔇</button>
         <!-- CSS Animated Background -->
         <div class="animated-background">
             <div class="gradient-orb orb-1"></div>
@@ -1424,9 +1484,7 @@
         <div class="parallax-layer parallax-layer-3"></div>
         
         <div class="hero-content" data-parallax>
-            <div class="logo-badge">
-                <span class="badge-text">POWERED BY AR</span>
-            </div>
+            <img class="logo-mark" src="assets/brand/logo.jpg" alt="AR Art Gallery">
             
             <h1 class="hero-title">
                 <span class="gradient-text">Transform Your Walls</span>
@@ -1701,6 +1759,134 @@
         const measurementDisplay = document.getElementById('measurement-display');
         const shareSheet = document.getElementById('share-sheet');
 
+        // — Sound: title ambience + synthesized UI effects (persisted toggle) —
+        const sfx = (() => {
+            let ctx = null;
+            let on = localStorage.getItem('gallerySound') === 'on';
+
+            function ac() {
+                if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+                if (ctx.state === 'suspended') ctx.resume();
+                return ctx;
+            }
+
+            function tone(freq, dur, opts) {
+                if (!on) return;
+                opts = opts || {};
+                try {
+                    const c = ac();
+                    const t0 = c.currentTime + (opts.delay || 0);
+                    const osc = c.createOscillator();
+                    const g = c.createGain();
+                    osc.type = opts.type || 'sine';
+                    osc.frequency.setValueAtTime(freq, t0);
+                    if (opts.glide) osc.frequency.exponentialRampToValueAtTime(opts.glide, t0 + dur);
+                    g.gain.setValueAtTime(0.0001, t0);
+                    g.gain.exponentialRampToValueAtTime(opts.vol || 0.08, t0 + 0.012);
+                    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+                    osc.connect(g).connect(c.destination);
+                    osc.start(t0);
+                    osc.stop(t0 + dur + 0.05);
+                } catch (e) {}
+            }
+
+            function noiseBurst(dur, vol) {
+                if (!on) return;
+                try {
+                    const c = ac();
+                    const frames = Math.floor(c.sampleRate * dur);
+                    const buf = c.createBuffer(1, frames, c.sampleRate);
+                    const data = buf.getChannelData(0);
+                    for (let i = 0; i < frames; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / frames);
+                    const src = c.createBufferSource();
+                    src.buffer = buf;
+                    const filter = c.createBiquadFilter();
+                    filter.type = 'lowpass';
+                    filter.frequency.value = 2400;
+                    const g = c.createGain();
+                    g.gain.value = vol;
+                    src.connect(filter);
+                    filter.connect(g);
+                    g.connect(c.destination);
+                    src.start();
+                } catch (e) {}
+            }
+
+            function sync() {
+                const b = document.getElementById('sound-toggle');
+                if (b) b.textContent = on ? '🔊' : '🔇';
+                const a = document.getElementById('ambience');
+                if (a) {
+                    a.volume = 0.35;
+                    if (on) a.play().catch(() => {}); else a.pause();
+                }
+            }
+
+            return {
+                get on() { return on; },
+                toggle() {
+                    on = !on;
+                    localStorage.setItem('gallerySound', on ? 'on' : 'off');
+                    if (on) ac();
+                    sync();
+                    this.tap();
+                },
+                sync,
+                tap()     { tone(740, 0.07, { glide: 540, vol: 0.05 }); },
+                select()  { tone(620, 0.07, { vol: 0.05 }); tone(930, 0.09, { vol: 0.05, delay: 0.06 }); },
+                hang()    { tone(660, 0.35, { type: 'triangle', vol: 0.09 }); tone(990, 0.45, { type: 'triangle', vol: 0.05, delay: 0.05 }); },
+                anchor()  { tone(196, 0.5, { vol: 0.1 }); tone(294, 0.55, { vol: 0.06, delay: 0.08 }); },
+                shutter() { noiseBurst(0.09, 0.12); }
+            };
+        })();
+
+        document.getElementById('sound-toggle').addEventListener('click', (e) => {
+            e.stopPropagation();
+            sfx.toggle();
+        });
+        sfx.sync();
+
+        // One delegated, subtle tap sound for every tactile control
+        document.addEventListener('click', (e) => {
+            if (e.target.closest('.dock-btn, .top-btn, .hero-cta, #search-btn, .btn-primary, .filter-chip, .share-option, .art-item, .template-card, .favorite-card')) {
+                sfx.tap();
+            }
+        });
+
+        const CURATED_COLLECTIONS = {
+            modern: [
+                ['Fractured Gilt', 'Atelier Noir', '1,450.00'],
+                ['Two Gestures', 'M. Hara', '820.00'],
+                ['Bronze Planes', 'V. Keller', '990.00'],
+                ['Terrain in Gold', 'E. Marchetti', '1,200.00'],
+                ['Molten Vein', 'Atelier Noir', '1,680.00'],
+                ['Quiet Horizon', 'R. Ostrowski', '760.00']
+            ],
+            photography: [
+                ['Concrete Light', 'D. Veld', '540.00'],
+                ['First Fog', 'A. Lindqvist', '620.00'],
+                ['Silk Tide', 'N. Okabe', '580.00'],
+                ['Golden Ridge', 'S. Amari', '640.00'],
+                ['Ascent', 'L. Fontaine', '520.00'],
+                ['City Rain', 'J. Mercer', '560.00']
+            ]
+        };
+
+        function curatedCollection(kind, label) {
+            const prefix = kind === 'modern' ? 'modern' : 'photo';
+            return CURATED_COLLECTIONS[kind].map(([title, artist, price], i) => ({
+                id: `${kind}-${i + 1}`,
+                title,
+                artist,
+                imageUrl: `assets/collections/${prefix}-${i + 1}.jpg`,
+                thumbnailUrl: `assets/collections/${prefix}-${i + 1}-thumb.jpg`,
+                source: label,
+                purchaseUrl: '#',
+                price
+            }));
+        }
+
+
         // Initialize
         updateFavoritesCount();
         initParallax();
@@ -1805,6 +1991,9 @@
 
             startScreen.classList.add('hidden');
             canvasContainer.classList.remove('hidden');
+
+            const heroVideo = document.getElementById('hero-video');
+            if (heroVideo) heroVideo.pause();
 
             try {
                 if (xrSupported) {
@@ -2055,6 +2244,7 @@
                     };
                     
                     scene.add(currentArtwork);
+                    sfx.hang();
                     hideHint();
                     showStatus(`Placed: ${selectedArt.title}`);
                     
@@ -2189,10 +2379,9 @@
                             };
                         });
                 } else if (currentSource === 'modern') {
-                    // Simulate modern art source
-                    artworksData = generatePlaceholderArt('Modern Art', searchQuery);
+                    artworksData = curatedCollection('modern', 'Modern Collection');
                 } else if (currentSource === 'photography') {
-                    artworksData = generatePlaceholderArt('Photography', searchQuery);
+                    artworksData = curatedCollection('photography', 'Photography Collection');
                 } else if (currentSource === 'nft') {
                     artworksData = generatePlaceholderArt('NFT Collection', searchQuery);
                 }
@@ -2245,7 +2434,7 @@
                         ${isFavorite ? '❤️' : '🤍'}
                     </div>
                     ${art.price ? `<div class="buy-badge">$${art.price}</div>` : ''}
-                    <img crossorigin="anonymous" src="${art.thumbnailUrl}" alt="${art.title}" onerror="this.src='https://placehold.co/200x250?text=Art'">
+                    <img crossorigin="anonymous" src="${art.thumbnailUrl}" alt="${art.title}" onerror="this.src='assets/brand/art-placeholder.jpg'">
                     <div class="art-item-title">${art.title}</div>
                 `;
                 
@@ -2336,6 +2525,7 @@
                 link.href = dataUrl;
                 link.click();
                 
+                sfx.shutter();
                 showStatus('Screenshot saved!');
             } catch (error) {
                 console.error('Screenshot error:', error);
@@ -2447,11 +2637,7 @@
                 card.innerHTML = `
                     <h3>${template.name}</h3>
                     <p>${template.description}</p>
-                    <div class="template-artworks">
-                        ${Array.from({ length: Math.min(template.artworks, 4) }).map((_, i) => 
-                            `<img crossorigin="anonymous" src="https://picsum.photos/60/60?random=${template.id}-${i}" alt="Preview">`
-                        ).join('')}
-                    </div>
+                    <img class="template-preview" src="assets/templates/${template.id}.jpg" alt="${template.name}">
                 `;
                 
                 card.addEventListener('click', () => {
@@ -2502,6 +2688,14 @@
             exitAR();
         }
 
+        function restartHeroVideo() {
+            const heroVideo = document.getElementById('hero-video');
+            if (heroVideo) {
+                heroVideo.currentTime = 0;
+                heroVideo.play().catch(() => {});
+            }
+        }
+
         function exitAR() {
             if (xrSession) {
                 const session = xrSession;
@@ -2528,6 +2722,7 @@
 
             canvasContainer.classList.add('hidden');
             startScreen.classList.remove('hidden');
+            restartHeroVideo();
         }
 
         document.getElementById('exit-ar-btn').addEventListener('click', exitAR);
