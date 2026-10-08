@@ -51,6 +51,13 @@ let measurementMode = false;
 let currentSource = 'museum';
 let selectedTemplate = null;
 
+// ARKit mode: on iPhone/iPad Safari, hanging goes through Apple AR Quick
+// Look — native ARKit wall tracking straight from the web. Tapping a
+// painting opens it in Apple's viewer; its shutter button saves the photo.
+// Devices without Quick Look keep the in-browser Zappar flow.
+const arkitMode = !!(window.ARKitQuickLook && window.ARKitQuickLook.supported());
+let qlOpenedAt = 0;
+
 // A-Frame bundles its own THREE build
 const THREE = window.AFRAME.THREE;
 
@@ -353,24 +360,25 @@ document.getElementById('screenshot-btn').addEventListener('click', takeScreensh
 // ARKit itself detects the wall and anchors the artwork — native tracking
 // quality from a plain web link (iPhone/iPad Safari only)
 const wallLockBtn = document.getElementById('wall-lock-btn');
-if (wallLockBtn && window.ARKitQuickLook && ARKitQuickLook.supported()) {
+if (wallLockBtn && arkitMode) {
     wallLockBtn.style.display = '';
-    wallLockBtn.addEventListener('click', async () => {
+    wallLockBtn.addEventListener('click', () => {
         const sel = activePicture();
         const art = (sel && sel.userData.art) || selectedArt;
         if (!art) {
             showStatus('Select an artwork from the strip first');
             return;
         }
-        const widthM = sel ? sel.userData.originalWidth * sel.userData.scale : 0.8;
-        showStatus('Preparing Apple AR wall view…');
-        try {
-            await ARKitQuickLook.view(art, widthM);
-            showStatus('Point at your wall — ARKit locks it in place');
-        } catch (err) {
-            console.error('Quick Look error:', err);
-            showStatus('Could not open Apple AR for this artwork');
-        }
+        openInARKit(art);
+    });
+}
+
+// In ARKit mode the piece lives in Apple's viewer, not our scene, so the
+// in-scene size / remove / screenshot controls have nothing to act on
+if (arkitMode) {
+    ['size-up', 'size-down', 'replace-btn', 'screenshot-btn'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
     });
 }
 
@@ -396,6 +404,11 @@ document.getElementById('clear-btn').addEventListener('click', () => {
 
 document.getElementById('more-btn').addEventListener('click', () => {
     shareSheet.classList.add('active');
+});
+
+document.getElementById('tips-btn').addEventListener('click', () => {
+    shareSheet.classList.remove('active');
+    startCoachTour(true);
 });
 
 document.getElementById('search-toggle').addEventListener('click', () => {
@@ -467,6 +480,19 @@ function setPlacing(active) {
 
 function chooseTracking() {
     if (anchorEl) return;
+    if (arkitMode) {
+        // Hanging happens in Apple's ARKit viewer, so the in-browser scene
+        // is only the live camera backdrop: no tracker ladder, no anchoring
+        trackingMode = 'arkit';
+        anchorEl = document.getElementById('instant-anchor');
+        anchorEl.object3D.add(galleryGroup);
+        anchored = true;
+        setHint('Tap a painting — it hangs on your wall in Apple AR');
+        clearTimeout(showHint._t);
+        showHint._t = setTimeout(hideHint, 8000);
+        console.log('tracking mode: arkit (Quick Look)');
+        return;
+    }
     const worldEl = document.getElementById('world-anchor');
     const wp = worldEl && worldEl.components['zappar-user-placement'];
     if (wp && wp.placementGroup) {
@@ -640,6 +666,7 @@ async function initAR() {
 
     startScreen.classList.add('hidden');
     canvasContainer.classList.remove('hidden');
+    setTimeout(startCoachTour, 1800);
 
     const heroVideo = document.getElementById('hero-video');
     if (heroVideo) heroVideo.pause();
@@ -914,6 +941,10 @@ function placeArtwork() {
         showStatus('Select an artwork from the strip first');
         return;
     }
+    if (arkitMode) {
+        openInARKit(selectedArt);
+        return;
+    }
 
     const placingArt = selectedArt;
     const pose = aimPoseInAnchor(2);
@@ -965,6 +996,79 @@ function endPhotoFlow() {
     clearTimeout(promptForPhoto._t);
     document.getElementById('screenshot-btn').classList.remove('pulse');
     setHint(null);
+}
+
+// First-run tour of the interface — every icon in one tap-through pass,
+// dismissible at any step and replayable from the ⋯ menu
+function startCoachTour(force) {
+    if (!window.CoachMarks) return;
+    if (force !== true && CoachMarks._seen()) return;
+    // Wait for the interface to actually be on screen — the dock and strip
+    // can be hidden while the tracker is still scanning
+    const ready = () => {
+        const dock = document.getElementById('bottom-dock');
+        const strip = document.getElementById('art-gallery');
+        return dock && dock.getBoundingClientRect().width > 0 &&
+            strip && strip.getBoundingClientRect().height > 0;
+    };
+    let tries = 0;
+    clearInterval(startCoachTour._p);
+    const tick = () => {
+        if (!ready() && ++tries < 60) return false;
+        clearInterval(startCoachTour._p);
+        runCoachTour(force);
+        return true;
+    };
+    if (tick()) return;
+    startCoachTour._p = setInterval(tick, 500);
+}
+
+function runCoachTour(force) {
+    const steps = [
+        { id: 'art-gallery', title: 'The collection', text: 'Tap any painting to hang it on your wall.' + (arkitMode ? ' It opens in Apple AR with true wall tracking.' : '') },
+        { id: 'gallery-toggle', title: 'Artworks', text: 'Show or hide the collection strip.' },
+        { id: 'search-toggle', title: 'Search', text: 'Find paintings across museums, modern art and photography.' },
+        { id: 'favorites-btn', title: 'Favorites', text: 'Pieces you ♡ are saved here.' },
+        { id: 'size-up', title: 'Size', text: '➖ and ➕ resize the hung piece.' },
+        { id: 'replace-btn', title: 'Remove', text: 'Takes the selected piece off the wall.' },
+        { id: 'screenshot-btn', title: 'Photo', text: 'Saves a picture of your wall with the art in place.' },
+        { id: 'wall-lock-btn', title: 'Apple AR', text: 'Re-opens the current piece with ARKit wall tracking.' },
+        { id: 'more-btn', title: 'More', text: 'Sharing, measurements and the rest live here.' },
+        { id: 'exit-ar-btn', title: 'Exit', text: 'Back to the menu.' }
+    ];
+    CoachMarks.start(steps, { force: force === true });
+}
+
+// ------------------------------------------------------------ ARKit flow
+async function openInARKit(art) {
+    const sel = activePicture();
+    const widthM = sel ? sel.userData.originalWidth * sel.userData.scale : 0.8;
+    showStatus('Opening on your wall…');
+    qlOpenedAt = Date.now();
+    try {
+        await ARKitQuickLook.view(art, widthM);
+        setHint('Point at your wall to place it — the shutter saves a photo');
+    } catch (err) {
+        qlOpenedAt = 0;
+        console.error('Quick Look error:', err);
+        showStatus('Could not open Apple AR for this artwork');
+    }
+}
+
+// Quick Look fully covers the page; when it closes we land back here and
+// invite the next piece — the photo was taken with Apple's own shutter
+function onQuickLookReturn() {
+    if (!qlOpenedAt || document.hidden) return;
+    if (Date.now() - qlOpenedAt < 3000) return; // ignore the opening transition
+    qlOpenedAt = 0;
+    setHint('Beautiful. Try another painting — or a different wall');
+    artGallery.classList.remove('peek');
+    artGallery.classList.add('open');
+    document.getElementById('gallery-toggle').classList.add('active');
+}
+if (arkitMode) {
+    document.addEventListener('visibilitychange', onQuickLookReturn);
+    window.addEventListener('focus', onQuickLookReturn);
 }
 
 function buildTemplate(template) {
