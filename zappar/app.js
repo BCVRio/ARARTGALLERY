@@ -20,8 +20,8 @@ if (location.search.indexOf('debug=1') !== -1) {
     };
     document.addEventListener('DOMContentLoaded', () => {
         document.body.appendChild(panel);
-        log('[i]', ['AFRAME ' + (window.AFRAME ? AFRAME.version : 'MISSING'),
-                    'THREE r' + (window.AFRAME ? AFRAME.THREE.REVISION : '?'),
+        log('[i]', ['ZapparThree ' + (window.ZapparThree ? 'loaded' : 'MISSING'),
+                    'THREE r' + (window.THREE ? THREE.REVISION : '?'),
                     'UA ' + navigator.userAgent.slice(0, 80)]);
     });
     ['log', 'warn', 'error'].forEach(level => {
@@ -33,8 +33,15 @@ if (location.search.indexOf('debug=1') !== -1) {
 }
 
 // App State
-let sceneEl = null;
-let anchorEl = null;
+let renderer = null;            // THREE.WebGLRenderer we own (no A-Frame)
+let scene = null;               // root THREE.Scene
+let zCamera = null;             // ZapparThree.Camera (renders + tracks)
+let anchorNode = null;          // THREE.Object3D the gallery hangs from
+let instantTracker = null;      // ZapparThree.InstantWorldTracker
+let instantGroup = null;        // its anchor group in the scene
+let instantPlacement = true;    // while true the instant anchor follows the aim
+let arStarted = false;          // camera running and render loop live
+const frameCallbacks = new Set();
 let galleryGroup = null;        // THREE.Group that holds artwork meshes
 let gesturesWired = false;
 let trackingMode = 'instant';   // 'world' (plane detection) or 'instant' fallback
@@ -63,14 +70,14 @@ let qlOpenedAt = 0;
 // and let the (now native-quality) in-scene flow do the hanging
 function isInAppClip() {
     try {
-        return !!(window.ZapparAFrame && ZapparAFrame.isAppClip && ZapparAFrame.isAppClip());
+        return !!(window.ZapparThree && ZapparThree.isAppClip && ZapparThree.isAppClip());
     } catch (e) {
         return false;
     }
 }
 
-// A-Frame bundles its own THREE build
-const THREE = window.AFRAME.THREE;
+// The standalone Zappar bundle ships three.js and exposes it globally
+const THREE = window.THREE;
 
 // Parallax effect (start screen)
 function initParallax() {
@@ -479,15 +486,51 @@ document.addEventListener('click', (e) => {
     }
 });
 
-// The scene lives in the page from load (Zappar's reference pattern), so
-// bind to it immediately; this script runs at the end of <body>
-sceneEl = document.querySelector('a-scene');
+// Pure three.js Universal AR bootstrap (the flavor with official App Clip
+// support): our own renderer, Zappar's camera, no A-Frame in between. The
+// scene lives in the page from load; the camera starts on user action.
 galleryGroup = new THREE.Group();
 
-// Prefer Zappar world tracking (real plane detection, ~absolute scale); fall
-// back to instant tracking on devices where the world tracker fails to start
+function initThreeScene() {
+    if (renderer || !window.ZapparThree) return;
+    renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(window.devicePixelRatio || 1);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.domElement.id = 'ar-canvas';
+    document.body.insertBefore(renderer.domElement, document.body.firstChild);
+    window.addEventListener('resize', () => {
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    ZapparThree.glContextSet(renderer.getContext());
+    zCamera = new ZapparThree.Camera();
+    zCamera.rearCameraMirrorMode = ZapparThree.CameraMirrorMode.None;
+    scene = new THREE.Scene();
+    scene.background = zCamera.backgroundTexture;
+
+    const loop = () => {
+        requestAnimationFrame(loop);
+        if (!arStarted) return;
+        zCamera.updateFrame(renderer);
+        if (instantTracker && instantPlacement) {
+            instantTracker.setAnchorPoseFromCameraOffset(0, 0, -3);
+        }
+        frameCallbacks.forEach((cb) => { try { cb(); } catch (e) {} });
+        renderer.render(scene, zCamera);
+    };
+    requestAnimationFrame(loop);
+}
+initThreeScene();
+
+function ensureInstantTracking() {
+    if (instantGroup) return;
+    instantTracker = new ZapparThree.InstantWorldTracker();
+    instantGroup = new ZapparThree.InstantWorldAnchorGroup(zCamera, instantTracker);
+    scene.add(instantGroup);
+}
+
 function getZapparCamera() {
-    try { return sceneEl.systems['zappar-camera'].camera; } catch (e) { return null; }
+    return zCamera;
 }
 
 function setPlacing(active) {
@@ -495,13 +538,14 @@ function setPlacing(active) {
 }
 
 function chooseTracking() {
-    if (anchorEl) return;
+    if (anchorNode) return;
     if (arkitMode && !isInAppClip()) {
         // Hanging happens in Apple's ARKit viewer, so the in-browser scene
         // is only the live camera backdrop: no tracker ladder, no anchoring
         trackingMode = 'arkit';
-        anchorEl = document.getElementById('instant-anchor');
-        anchorEl.object3D.add(galleryGroup);
+        ensureInstantTracking();
+        anchorNode = instantGroup;
+        anchorNode.add(galleryGroup);
         anchored = true;
         setArkitControls(true);
         setHint('Tap a painting — it hangs on your wall in Apple AR');
@@ -512,14 +556,38 @@ function chooseTracking() {
     }
     setArkitControls(false);
     if (isInAppClip()) console.log('App Clip shell detected: native tracking feeds the scene');
-    const worldEl = document.getElementById('world-anchor');
-    const wp = worldEl && worldEl.components['zappar-user-placement'];
+    let wp = null;
+    try {
+        // Build Zappar's world placement directly on the three.js SDK — the
+        // same pieces the old A-Frame component assembled for us
+        const tracker = new ZapparThree.WorldTracker();
+        const placementGroup = new ZapparThree.UserPlacementAnchorGroup(zCamera, tracker, renderer);
+        placementGroup.placeOnPlanes = true;
+        placementGroup.placeOnGround = false;
+        placementGroup.visualizePlanesDuringPlacement = true;
+        placementGroup.placeButtonText = 'Place here';
+        placementGroup.showRestartPlacementButton = false;
+        scene.add(placementGroup);
+        const initializationUI = new ZapparThree.WorldTrackerUI(renderer.domElement);
+        wp = { tracker, placementGroup, initializationUI, data: { showInitializationUI: true } };
+        frameCallbacks.add(() => {
+            if (placementGroup.ready) {
+                initializationUI.hide();
+            } else if (wp.data.showInitializationUI) {
+                initializationUI.show();
+                initializationUI.update();
+            }
+        });
+    } catch (e) {
+        console.log('world tracker unavailable:', e && e.message);
+        wp = null;
+    }
     if (wp && wp.placementGroup) {
         trackingMode = 'world';
         worldGroup = wp.placementGroup;
         worldGroup.longPressToMove = 'none';
         worldGroup.showPlaceButton = false;
-        anchorEl = worldEl;
+        anchorNode = worldGroup.contentGroup;
         setPlacing(true);
         setHint('Aim at your wall and pan slowly so the room gets mapped…');
 
@@ -591,18 +659,21 @@ function chooseTracking() {
             try { localStorage.setItem('arWorldFailed', '1'); } catch (e) {}
             removePlaceOverlay();
             try { worldGroup.enabled = false; } catch (e) {}
+            try { worldGroup.visible = false; } catch (e) {}
             try {
                 wp.data.showInitializationUI = false;
                 if (wp.initializationUI) wp.initializationUI.hide();
             } catch (e) {}
-            if (galleryGroup.parent === anchorEl.object3D) {
-                anchorEl.object3D.remove(galleryGroup);
+            if (galleryGroup.parent === anchorNode) {
+                anchorNode.remove(galleryGroup);
             }
             trackingMode = 'instant';
             worldGroup = null;
-            anchorEl = document.getElementById('instant-anchor');
-            anchorEl.setAttribute('zappar-instant', 'enabled', true);
-            anchorEl.object3D.add(galleryGroup);
+            ensureInstantTracking();
+            instantTracker.enabled = true;
+            instantPlacement = true;
+            anchorNode = instantGroup;
+            anchorNode.add(galleryGroup);
             anchored = false;
             setPlacing(false);
             setHint('Simple mode — aim at your wall and tap once to set it');
@@ -666,20 +737,26 @@ function chooseTracking() {
         }, 300);
     } else {
         trackingMode = 'instant';
-        anchorEl = document.getElementById('instant-anchor');
-        anchorEl.setAttribute('zappar-instant', 'enabled', true);
+        ensureInstantTracking();
+        instantTracker.enabled = true;
+        instantPlacement = true;
+        anchorNode = instantGroup;
     }
-    anchorEl.object3D.add(galleryGroup);
+    anchorNode.add(galleryGroup);
     console.log('tracking mode:', trackingMode);
 }
 
 async function initAR() {
-    if (!window.AFRAME || !window.AFRAME.components['zappar-camera']) {
+    if (!window.ZapparThree || !renderer) {
         showStatus('AR engine failed to load. Check your connection and reload the page.');
         return;
     }
     if (!window.isSecureContext) {
         showStatus('AR needs a secure connection. Open this page over https://');
+        return;
+    }
+    if (ZapparThree.browserIncompatible()) {
+        ZapparThree.browserIncompatibleUI();
         return;
     }
 
@@ -693,35 +770,43 @@ async function initAR() {
     if (amb) fadeAudio(amb, 0, 2500, () => amb.pause());
 
     if (cameraPaused) {
-        const cam = getZapparCamera();
-        try { cam.start(false); } catch (e) { try { cam.start(); } catch (e2) {} }
+        try { zCamera.start(false); } catch (e) { try { zCamera.start(); } catch (e2) {} }
         cameraPaused = false;
     }
 
     if (!gesturesWired) {
         gesturesWired = true;
-        const wireUp = () => {
-            chooseTracking();
-            setupGestures(sceneEl.canvas);
-            if (trackingMode !== 'world') showHint();
-            let checks = 0;
-            const watchdog = setInterval(() => {
-                checks++;
-                if (sceneEl.object3D && sceneEl.object3D.background) {
-                    clearInterval(watchdog);
-                    console.log('camera feed rendering after', checks, 's');
-                } else if (checks >= 8) {
-                    clearInterval(watchdog);
-                    console.error('camera background texture never arrived');
-                    showStatus('Camera feed is not rendering. Reload the page — if it persists, add ?debug=1 to the address and send a screenshot.');
-                }
-            }, 1000);
-        };
-        if (sceneEl.hasLoaded) {
-            wireUp();
-        } else {
-            sceneEl.addEventListener('loaded', wireUp, { once: true });
+
+        // Camera permission, then camera, then trackers — all ours now
+        let granted = true;
+        try {
+            granted = await ZapparThree.permissionRequestUI();
+        } catch (e) { console.log('permission UI error:', e && e.message); }
+        if (!granted) {
+            try { ZapparThree.permissionDeniedUI(); } catch (e) {}
+            showStatus('Camera access is needed to hang art on your wall');
+            return;
         }
+        try { zCamera.start(false); } catch (e) { try { zCamera.start(); } catch (e2) {} }
+        arStarted = true;
+
+        chooseTracking();
+        setupGestures(renderer.domElement);
+        if (trackingMode !== 'world') showHint();
+        let checks = 0;
+        const watchdog = setInterval(() => {
+            checks++;
+            let frames = 0;
+            try { frames = zCamera.pipeline.frameNumber(); } catch (e) {}
+            if (frames > 0) {
+                clearInterval(watchdog);
+                console.log('camera feed rendering after', checks, 's');
+            } else if (checks >= 8) {
+                clearInterval(watchdog);
+                console.error('camera frames never arrived');
+                showStatus('Camera feed is not rendering. Reload the page — if it persists, add ?debug=1 to the address and send a screenshot.');
+            }
+        }, 1000);
     }
 
     if (artworks.length === 0) {
@@ -750,7 +835,7 @@ function pictureAt(clientX, clientY) {
         -(clientY / window.innerHeight) * 2 + 1
     );
     galleryGroup.updateMatrixWorld(true);
-    raycaster.setFromCamera(ndc, sceneEl.camera);
+    raycaster.setFromCamera(ndc, zCamera);
     const hits = raycaster.intersectObjects(placedArts, true);
     if (hits.length === 0) return null;
     let o = hits[0].object;
@@ -824,11 +909,11 @@ function hasArt() {
 // Pose at the point the camera is aiming at, expressed in anchor-local space
 // and kept upright relative to the tracked world (anchor Y ~ gravity up)
 function aimPoseInAnchor(distance) {
-    const cam = sceneEl.camera;
+    const cam = zCamera;
     cam.updateMatrixWorld();
-    anchorEl.object3D.updateMatrixWorld();
+    anchorNode.updateMatrixWorld();
 
-    const inv = new THREE.Matrix4().copy(anchorEl.object3D.matrixWorld).invert();
+    const inv = new THREE.Matrix4().copy(anchorNode.matrixWorld).invert();
     const camPos = new THREE.Vector3().setFromMatrixPosition(cam.matrixWorld).applyMatrix4(inv);
     const dir = new THREE.Vector3(0, 0, -1).transformDirection(cam.matrixWorld)
         .transformDirection(inv).normalize();
@@ -842,14 +927,17 @@ function aimPoseInAnchor(distance) {
 function dragPicture(mesh, dx, dy) {
     // Convert screen pixels to world units at the picture's depth, moving in
     // the camera's view plane, then express that delta in anchor-local space
-    const cam = sceneEl.camera;
+    const cam = zCamera;
     const camWorld = new THREE.Vector3();
     cam.getWorldPosition(camWorld);
     const meshWorld = new THREE.Vector3();
     mesh.getWorldPosition(meshWorld);
 
     const depth = meshWorld.distanceTo(camWorld) || 3;
-    const worldPerPixel = (2 * depth * Math.tan(THREE.MathUtils.degToRad(cam.fov / 2))) / window.innerHeight;
+    // Zappar's camera carries no fov property; read the vertical half-angle
+    // straight from its projection matrix (m[5] = cot(fovY / 2))
+    const halfFov = Math.atan(1 / (cam.projectionMatrix.elements[5] || 1));
+    const worldPerPixel = (2 * depth * Math.tan(halfFov)) / window.innerHeight;
 
     const delta = new THREE.Vector3()
         .setFromMatrixColumn(cam.matrixWorld, 0)
@@ -857,7 +945,7 @@ function dragPicture(mesh, dx, dy) {
         .addScaledVector(new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1), -dy * worldPerPixel);
 
     const anchorQuat = new THREE.Quaternion();
-    anchorEl.object3D.getWorldQuaternion(anchorQuat);
+    anchorNode.getWorldQuaternion(anchorQuat);
     delta.applyQuaternion(anchorQuat.invert());
 
     mesh.position.add(delta);
@@ -894,7 +982,7 @@ function onTap(target) {
         // Until the user confirms a wall, taps belong to Zappar's placement UI
         if (!anchored) return;
     } else if (!anchored) {
-        anchorEl.setAttribute('zappar-instant', 'placementMode', false);
+        instantPlacement = false;
         anchored = true;
         hideHint();
         showStatus('Anchored — tap artwork in the strip to hang it');
@@ -1297,9 +1385,8 @@ function takeScreenshot() {
     try {
         // Re-render right before reading the canvas so the buffer is fresh
         // (the camera feed is the scene background, so it's included)
-        const renderer = sceneEl.renderer;
-        renderer.render(sceneEl.object3D, sceneEl.camera);
-        const dataUrl = sceneEl.canvas.toDataURL('image/png');
+        renderer.render(scene, zCamera);
+        const dataUrl = renderer.domElement.toDataURL('image/png');
 
         const link = document.createElement('a');
         link.download = `ar-gallery-${Date.now()}.png`;

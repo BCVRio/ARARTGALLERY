@@ -46,8 +46,7 @@
             window.Worker.prototype = RealWorker.prototype;
         })();
     </script>
-    <script src="aframe.min.js"></script>
-    <script src="zappar-aframe.js"></script>
+    <script src="zappar-threejs.js"></script>
     <style>
         * {
             margin: 0;
@@ -75,13 +74,14 @@
             height: 100%;
         }
 
-        #scene-mount a-scene,
-        #scene-mount .a-canvas {
-            position: absolute !important;
+        /* The AR view: our own three.js canvas, fixed behind the UI */
+        #ar-canvas {
+            position: fixed !important;
             top: 0;
             left: 0;
-            width: 100% !important;
-            height: 100% !important;
+            width: 100vw !important;
+            height: 100vh !important;
+            z-index: 0;
             touch-action: none;
         }
 
@@ -1684,20 +1684,8 @@
         </div>
     </div>
 
-    <!-- AR Canvas -->
-    <!-- The AR scene lives in the DOM from page load so Zappar's permission
-         flow runs exactly as in their reference apps -->
-    <a-scene vr-mode-ui="enabled: false"
-             device-orientation-permission-ui="enabled: false"
-             loading-screen="enabled: false"
-             renderer="colorManagement: true; antialias: true">
-        <a-entity zappar-permissions-ui id="permissions"></a-entity>
-        <a-entity zappar-compatibility-ui id="compatibility"></a-entity>
-        <a-entity camera zappar-camera id="z-camera"></a-entity>
-        <a-entity id="world-anchor"
-                  zappar-user-placement="placeOnPlanes: true; placeOnGround: false; showInitializationUI: true; visualizePlanesDuringPlacement: true; showPlaceButton: false; placeButtonText: Place here; showRestartPlacementButton: false"></a-entity>
-        <a-entity id="instant-anchor" zappar-instant="placement-mode: true; enabled: false; anchor-pose-offset: 0 0 -3"></a-entity>
-    </a-scene>
+    <!-- The AR canvas (#ar-canvas) is created by app.js: pure three.js on
+         Zappar's Universal AR SDK, the flavor with official App Clip support -->
 
     <div id="canvas-container" class="hidden">
         
