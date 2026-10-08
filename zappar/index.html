@@ -1400,23 +1400,24 @@
         }
 
         /* First-run hint chip */
+        /* Guidance line sits under the top bar, never over the art */
         #hint {
             position: absolute;
-            top: 50%;
+            top: calc(64px + env(safe-area-inset-top, 0px));
             left: 50%;
-            transform: translate(-50%, -50%);
+            transform: translateX(-50%);
             background: rgba(6, 6, 8, 0.8);
             border: 1px solid rgba(212, 175, 55, 0.45);
             color: rgba(255, 248, 230, 0.95);
             font-family: 'Playfair Display', Georgia, serif;
             font-style: italic;
-            font-size: 16px;
-            padding: 14px 22px;
+            font-size: 15px;
+            padding: 11px 20px;
             border-radius: 24px;
             pointer-events: none;
             opacity: 1;
             transition: opacity 0.6s ease;
-            max-width: 80vw;
+            max-width: 82vw;
             text-align: center;
             z-index: 20;
         }
@@ -1785,6 +1786,10 @@
             <div class="share-option" id="tips-btn">
                 <div class="share-option-icon">💡</div>
                 <div class="share-option-label">Tips</div>
+            </div>
+            <div class="share-option" id="diag-btn">
+                <div class="share-option-icon">🛠</div>
+                <div class="share-option-label">Diagnostics</div>
             </div>
         </div>
 

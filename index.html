@@ -1346,23 +1346,25 @@
         }
 
         /* First-run hint chip */
+        /* Guidance line sits under the top bar, never over the art */
         #hint {
             position: absolute;
-            top: 50%;
+            top: calc(64px + env(safe-area-inset-top, 0px));
             left: 50%;
-            transform: translate(-50%, -50%);
+            transform: translateX(-50%);
             background: rgba(6, 6, 8, 0.8);
             border: 1px solid rgba(212, 175, 55, 0.45);
             color: rgba(255, 248, 230, 0.95);
             font-family: 'Playfair Display', Georgia, serif;
             font-style: italic;
-            font-size: 16px;
-            padding: 14px 22px;
+            font-size: 15px;
+            padding: 11px 20px;
             border-radius: 24px;
             pointer-events: none;
             opacity: 1;
             transition: opacity 0.6s ease;
-            white-space: nowrap;
+            max-width: 82vw;
+            text-align: center;
             z-index: 20;
         }
         #hint.fade { opacity: 0; }
@@ -2423,6 +2425,14 @@
                     const response = await fetch(api);
                     const data = await response.json();
                     const strip = (f) => f && f.value ? f.value.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() : '';
+                    // Some Commons titles carry raw Wikidata qualifiers
+                    // ('… title QS:P1476,en:"…" label QS:Len,…'); keep the
+                    // quoted English title, else fall back to the filename
+                    const cleanTitle = (t) => {
+                        if (!t || !/QS:/.test(t)) return t || '';
+                        const m = t.match(/en:"([^"]+)"/);
+                        return m ? m[1] : '';
+                    };
 
                     artworksData = Object.values((data.query && data.query.pages) || {})
                         .sort((a, b) => (a.index || 0) - (b.index || 0))
@@ -2433,7 +2443,7 @@
                             const fallbackTitle = page.title.replace(/^File:/, '').replace(/\.[^.]+$/, '').replace(/_/g, ' ');
                             return {
                                 id: page.pageid,
-                                title: strip(meta.ObjectName) || fallbackTitle,
+                                title: cleanTitle(strip(meta.ObjectName)) || fallbackTitle,
                                 artist: strip(meta.Artist) || 'Unknown artist',
                                 date: strip(meta.DateTimeOriginal),
                                 imageUrl: info.thumburl,
@@ -2741,7 +2751,9 @@
             showHint._t = setTimeout(() => hint.classList.add('fade'), 4500);
         }
 
-        function setHint(text) {
+        // ttl (ms) fades the hint away on its own — flow prompts shouldn't
+        // sit on the art; the glowing 📸 button carries the cue afterwards
+        function setHint(text, ttl) {
             const hint = document.getElementById('hint');
             clearTimeout(showHint._t);
             if (text === null) {
@@ -2750,6 +2762,7 @@
             }
             hint.textContent = text;
             hint.classList.remove('fade');
+            if (ttl) showHint._t = setTimeout(() => hint.classList.add('fade'), ttl);
         }
 
         // Guided flow: once a piece has hung for a moment, nudge toward a
@@ -2758,7 +2771,7 @@
             clearTimeout(promptForPhoto._t);
             promptForPhoto._t = setTimeout(() => {
                 if (!currentArtwork) return;
-                setHint('Happy with it? Tap 📸 to keep a photo');
+                setHint('Happy with it? Tap 📸 to keep a photo', 6000);
                 document.getElementById('screenshot-btn').classList.add('pulse');
             }, 3500);
         }
@@ -2768,7 +2781,7 @@
             if (!currentArtwork) return;
             setTimeout(() => {
                 if (!currentArtwork) return;
-                setHint('Beautiful. Try another painting — or point at a new wall');
+                setHint('Beautiful. Try another painting — or point at a new wall', 7000);
                 artGallery.classList.add('open');
                 document.getElementById('gallery-toggle').classList.add('active');
             }, 1200);
@@ -2843,7 +2856,7 @@
             if (!qlOpenedAt || document.hidden) return;
             if (Date.now() - qlOpenedAt < 3000) return;
             qlOpenedAt = 0;
-            setHint('Beautiful. Try another painting — or a different wall');
+            setHint('Beautiful. Try another painting — or a different wall', 7000);
             artGallery.classList.add('open');
             document.getElementById('gallery-toggle').classList.add('active');
         }

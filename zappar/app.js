@@ -5,32 +5,44 @@
 // fixture expressed in anchor-local space, so multiple artworks can sit
 // on different walls at once and all stay locked to the room together.
 
-// On-device diagnostics: open the page with ?debug=1 to see a live log
-// overlay (errors, warnings, AR pipeline state) without remote debugging
-if (location.search.indexOf('debug=1') !== -1) {
-    const panel = document.createElement('pre');
-    panel.style.cssText = 'position:fixed;left:0;right:0;bottom:0;max-height:38vh;overflow:auto;' +
+// On-device diagnostics: the log is always buffered; the overlay shows
+// with ?debug=1 or from ⋯ → Diagnostics (the App Clip has no address bar)
+const diagLines = [];
+let diagPanel = null;
+const diagLog = (tag, args) => {
+    const line = tag + ' ' + Array.from(args).map(a => {
+        try { return typeof a === 'string' ? a : JSON.stringify(a); } catch (e) { return String(a); }
+    }).join(' ');
+    diagLines.push(line);
+    if (diagLines.length > 400) diagLines.shift();
+    if (diagPanel) {
+        diagPanel.textContent += line + '\n';
+        diagPanel.scrollTop = diagPanel.scrollHeight;
+    }
+};
+function showDiagnostics() {
+    if (diagPanel) { diagPanel.remove(); diagPanel = null; return; }
+    diagPanel = document.createElement('pre');
+    diagPanel.style.cssText = 'position:fixed;left:0;right:0;bottom:0;max-height:38vh;overflow:auto;' +
         'background:rgba(0,0,0,0.85);color:#7CFC00;font:10px/1.4 monospace;padding:8px;margin:0;' +
         'z-index:99999;white-space:pre-wrap;pointer-events:auto;';
-    const log = (tag, args) => {
-        panel.textContent += tag + ' ' + Array.from(args).map(a => {
-            try { return typeof a === 'string' ? a : JSON.stringify(a); } catch (e) { return String(a); }
-        }).join(' ') + '\n';
-        panel.scrollTop = panel.scrollHeight;
-    };
-    document.addEventListener('DOMContentLoaded', () => {
-        document.body.appendChild(panel);
-        log('[i]', ['ZapparThree ' + (window.ZapparThree ? 'loaded' : 'MISSING'),
+    diagPanel.textContent = diagLines.join('\n') + '\n';
+    diagPanel.addEventListener('dblclick', showDiagnostics);
+    document.body.appendChild(diagPanel);
+    diagPanel.scrollTop = diagPanel.scrollHeight;
+}
+['log', 'warn', 'error'].forEach(level => {
+    const orig = console[level].bind(console);
+    console[level] = (...args) => { diagLog('[' + level[0] + ']', args); orig(...args); };
+});
+window.addEventListener('error', e => diagLog('[E]', [e.message, e.filename + ':' + e.lineno]));
+window.addEventListener('unhandledrejection', e => diagLog('[P]', [String(e.reason)]));
+document.addEventListener('DOMContentLoaded', () => {
+    diagLog('[i]', ['ZapparThree ' + (window.ZapparThree ? 'loaded' : 'MISSING'),
                     'THREE r' + (window.THREE ? THREE.REVISION : '?'),
                     'UA ' + navigator.userAgent.slice(0, 80)]);
-    });
-    ['log', 'warn', 'error'].forEach(level => {
-        const orig = console[level].bind(console);
-        console[level] = (...args) => { log('[' + level[0] + ']', args); orig(...args); };
-    });
-    window.addEventListener('error', e => log('[E]', [e.message, e.filename + ':' + e.lineno]));
-    window.addEventListener('unhandledrejection', e => log('[P]', [String(e.reason)]));
-}
+    if (location.search.indexOf('debug=1') !== -1) showDiagnostics();
+});
 
 // App State
 let renderer = null;            // THREE.WebGLRenderer we own (no A-Frame)
@@ -434,6 +446,11 @@ document.getElementById('tips-btn').addEventListener('click', () => {
     startCoachTour(true);
 });
 
+document.getElementById('diag-btn').addEventListener('click', () => {
+    shareSheet.classList.remove('active');
+    showDiagnostics();
+});
+
 document.getElementById('search-toggle').addEventListener('click', () => {
     searchPanel.classList.toggle('open');
 });
@@ -591,15 +608,17 @@ function chooseTracking() {
         setPlacing(true);
         setHint('Aim at your wall and pan slowly so the room gets mapped…');
 
-        // Walls matter most: vertical plane detection is off by default
+        // Walls matter most: vertical plane detection is off by default.
+        // The native-bridged tracker inside the App Clip does not implement
+        // the "supported" query at all (it throws), yet ARKit/ARCore detect
+        // walls fine — so always switch it on, and only report the query
+        let verticalSupported = true;
+        try { verticalSupported = wp.tracker.verticalPlaneDetectionSupported !== false; }
+        catch (e) { console.log('vertical plane support query unavailable (native bridge) — enabling anyway'); }
         try {
-            if (wp.tracker && wp.tracker.verticalPlaneDetectionSupported) {
-                wp.tracker.verticalPlaneDetectionEnabled = true;
-                console.log('wall (vertical plane) detection enabled');
-            } else {
-                console.log('vertical plane detection not supported on this device');
-            }
-        } catch (e) { console.log('vertical plane detection unavailable'); }
+            wp.tracker.verticalPlaneDetectionEnabled = true;
+            console.log('wall (vertical plane) detection enabled; reported support:', verticalSupported);
+        } catch (e) { console.log('could not enable vertical plane detection:', e && e.message); }
 
         // Zappar's native scan -> reticle -> place flow does the initial
         // anchoring (it seeds the world map most reliably); we only gate WHEN
@@ -607,9 +626,13 @@ function chooseTracking() {
         const t0 = Date.now();
         // If this environment refused to world-track before, don't make the
         // user sit through the full ladder again
-        const failedBefore = (() => { try { return localStorage.getItem('arWorldFailed') === '1'; } catch (e) { return false; } })();
-        const skipAfter = failedBefore ? 2000 : 6000;
-        const capAfter = failedBefore ? 9000 : 25000;
+        // Inside the App Clip the tracker is native ARKit/ARCore: it does
+        // not fail the way browser vision can, so never fast-fail it on a
+        // remembered browser failure, and give it a long leash
+        const nativeShell = isInAppClip();
+        const failedBefore = !nativeShell && (() => { try { return localStorage.getItem('arWorldFailed') === '1'; } catch (e) { return false; } })();
+        const skipAfter = nativeShell ? 20000 : (failedBefore ? 2000 : 6000);
+        const capAfter = nativeShell ? 90000 : (failedBefore ? 9000 : 25000);
         let buttonShown = false;
         let sawAiming = false;
         let placedByButton = false;
@@ -655,8 +678,9 @@ function chooseTracking() {
             clearInterval(poll);
             skipBtn.classList.add('hidden');
             // Remember that this environment would not world-track, so the
-            // next session goes to simple mode much faster
-            try { localStorage.setItem('arWorldFailed', '1'); } catch (e) {}
+            // next session goes to simple mode much faster (browser only —
+            // a native-shell timeout says nothing about the browser)
+            if (!nativeShell) { try { localStorage.setItem('arWorldFailed', '1'); } catch (e) {} }
             removePlaceOverlay();
             try { worldGroup.enabled = false; } catch (e) {}
             try { worldGroup.visible = false; } catch (e) {}
@@ -1082,7 +1106,7 @@ function promptForPhoto() {
     clearTimeout(promptForPhoto._t);
     promptForPhoto._t = setTimeout(() => {
         if (!placedArts.length) return;
-        setHint('Happy with it? Tap 📸 to keep a photo');
+        setHint('Happy with it? Tap 📸 to keep a photo', 6000);
         document.getElementById('screenshot-btn').classList.add('pulse');
     }, 3500);
 }
@@ -1092,7 +1116,7 @@ function promptForNextPiece() {
     if (!placedArts.length) return;
     setTimeout(() => {
         if (!placedArts.length) return;
-        setHint('Beautiful. Try another painting — or point at a new wall');
+        setHint('Beautiful. Try another painting — or point at a new wall', 7000);
         artGallery.classList.remove('peek');
         artGallery.classList.add('open');
         document.getElementById('gallery-toggle').classList.add('active');
@@ -1168,7 +1192,7 @@ function onQuickLookReturn() {
     if (!qlOpenedAt || document.hidden) return;
     if (Date.now() - qlOpenedAt < 3000) return; // ignore the opening transition
     qlOpenedAt = 0;
-    setHint('Beautiful. Try another painting — or a different wall');
+    setHint('Beautiful. Try another painting — or a different wall', 7000);
     artGallery.classList.remove('peek');
     artGallery.classList.add('open');
     document.getElementById('gallery-toggle').classList.add('active');
@@ -1236,6 +1260,14 @@ async function searchArt(query = null) {
             const response = await fetch(api);
             const data = await response.json();
             const strip = (f) => f && f.value ? f.value.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() : '';
+            // Some Commons titles carry raw Wikidata qualifiers
+            // ('… title QS:P1476,en:"…" label QS:Len,…'); keep the English
+            // title when one is quoted, otherwise fall back to the filename
+            const cleanTitle = (t) => {
+                if (!t || !/QS:/.test(t)) return t || '';
+                const m = t.match(/en:"([^"]+)"/);
+                return m ? m[1] : '';
+            };
 
             artworksData = Object.values((data.query && data.query.pages) || {})
                 .sort((a, b) => (a.index || 0) - (b.index || 0))
@@ -1246,7 +1278,7 @@ async function searchArt(query = null) {
                     const fallbackTitle = page.title.replace(/^File:/, '').replace(/\.[^.]+$/, '').replace(/_/g, ' ');
                     return {
                         id: page.pageid,
-                        title: strip(meta.ObjectName) || fallbackTitle,
+                        title: cleanTitle(strip(meta.ObjectName)) || fallbackTitle,
                         artist: strip(meta.Artist) || 'Unknown artist',
                         date: strip(meta.DateTimeOriginal),
                         imageUrl: info.thumburl,
@@ -1548,7 +1580,9 @@ function showHint() {
     showHint._t = setTimeout(() => hint.classList.add('fade'), 4500);
 }
 
-function setHint(text) {
+// ttl (ms) fades the hint away on its own — flow prompts shouldn't sit on
+// the art; the glowing 📸 button carries the cue after the words go
+function setHint(text, ttl) {
     const hint = document.getElementById('hint');
     clearTimeout(showHint._t);
     if (text === null) {
@@ -1557,6 +1591,7 @@ function setHint(text) {
     }
     hint.textContent = text;
     hint.classList.remove('fade');
+    if (ttl) showHint._t = setTimeout(() => hint.classList.add('fade'), ttl);
 }
 
 function hideHint() {
