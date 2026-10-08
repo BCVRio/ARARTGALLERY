@@ -1377,6 +1377,13 @@
             transition: all 0.15s ease;
         }
         .dock-btn:active { transform: scale(0.88); background: rgba(212, 175, 55, 0.35); }
+
+        /* Gentle glow inviting the post-hang photo */
+        .dock-btn.pulse { animation: dock-pulse 1.8s ease-in-out infinite; }
+        @keyframes dock-pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(212, 175, 55, 0.0); }
+            50% { box-shadow: 0 0 14px 4px rgba(212, 175, 55, 0.55); }
+        }
         .dock-btn.active { background: rgba(212, 175, 55, 0.4); border-color: #d4af37; }
 
         /* Status toast: top-center, out of the camera's way */
@@ -1702,7 +1709,8 @@
                     ❤️
                     <span class="badge" id="favorites-count">0</span>
                 </button>
-                <button class="top-btn" id="templates-btn">📐</button>
+                <!-- Multi-piece templates retired: the flow is one artwork per wall -->
+                <button class="top-btn" id="templates-btn" style="display: none">📐</button>
                 <button class="top-btn" id="exit-ar-btn" title="Exit AR">✕</button>
             </div>
 

@@ -391,7 +391,7 @@ document.getElementById('clear-btn').addEventListener('click', () => {
     shareSheet.classList.remove('active');
     clearGallery();
     updateDockButtons();
-    showStatus('All pictures removed');
+    showStatus('Wall cleared');
 });
 
 document.getElementById('more-btn').addEventListener('click', () => {
@@ -592,14 +592,16 @@ function chooseTracking() {
                     settle();
                     return;
                 }
-                if (!ready && elapsed > skipAfter) {
+                if (!ready && elapsed > skipAfter && placedArts.length === 0) {
                     skipBtn.classList.remove('hidden');
                 }
                 if (!ready && elapsed > capAfter && placedArts.length === 0) {
                     fallbackToInstant();
                     return;
                 }
-                if (!ready && elapsed > 12000 && !poll._coached) {
+                // Coach only while the wall is still empty — once a piece
+                // hangs, the guided photo flow owns the hint line
+                if (!ready && elapsed > 12000 && !poll._coached && placedArts.length === 0 && !anchored) {
                     poll._coached = true;
                     setHint('Still mapping — step back a little, aim at wall detail; more light helps…');
                 }
@@ -837,6 +839,7 @@ function removePicture(mesh) {
     mesh.material.dispose();
     placedArts = placedArts.filter(m => m !== mesh);
     if (selectedPlaced === mesh) selectedPlaced = null;
+    if (placedArts.length === 0) endPhotoFlow();
     updateDockButtons();
 }
 
@@ -914,13 +917,10 @@ function placeArtwork() {
 
     const placingArt = selectedArt;
     const pose = aimPoseInAnchor(2);
-    // Nudge sideways rather than stacking onto an already-hung picture
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(pose.quat);
-    let guard = 0;
-    while (guard++ < 6 && placedArts.some(m => m.position.distanceTo(pose.pos) < 0.45)) {
-        pose.pos.addScaledVector(right, 0.5);
-    }
     loadArtTexture(placingArt, (texture) => {
+        // One piece at a time: web AR holds a single fixture well, a crowd
+        // poorly — the flow is hang, photograph, then try the next one
+        clearGallery();
         const mesh = makeArtMesh(texture, 1, placingArt);
         mesh.position.copy(pose.pos);
         mesh.quaternion.copy(pose.quat);
@@ -933,8 +933,38 @@ function placeArtwork() {
         hideHint();
         artGallery.classList.add('peek');
         showStatus(`Hung: ${placingArt.title} — drag to fine-tune`);
+        promptForPhoto();
         if (measurementMode) updateMeasurement();
     });
+}
+
+// Guided flow: once a piece has hung for a moment, nudge toward a photo;
+// after the photo, invite the next painting or a fresh wall
+function promptForPhoto() {
+    clearTimeout(promptForPhoto._t);
+    promptForPhoto._t = setTimeout(() => {
+        if (!placedArts.length) return;
+        setHint('Happy with it? Tap 📸 to keep a photo');
+        document.getElementById('screenshot-btn').classList.add('pulse');
+    }, 3500);
+}
+
+function promptForNextPiece() {
+    document.getElementById('screenshot-btn').classList.remove('pulse');
+    if (!placedArts.length) return;
+    setTimeout(() => {
+        if (!placedArts.length) return;
+        setHint('Beautiful. Try another painting — or point at a new wall');
+        artGallery.classList.remove('peek');
+        artGallery.classList.add('open');
+        document.getElementById('gallery-toggle').classList.add('active');
+    }, 1200);
+}
+
+function endPhotoFlow() {
+    clearTimeout(promptForPhoto._t);
+    document.getElementById('screenshot-btn').classList.remove('pulse');
+    setHint(null);
 }
 
 function buildTemplate(template) {
@@ -1154,7 +1184,8 @@ function takeScreenshot() {
         link.click();
 
         sfx.shutter();
-        showStatus('Screenshot saved!');
+        showStatus('Photo saved!');
+        promptForNextPiece();
     } catch (error) {
         console.error('Screenshot error:', error);
         showStatus('Error taking screenshot');
