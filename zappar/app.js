@@ -58,6 +58,17 @@ let selectedTemplate = null;
 const arkitMode = !!(window.ARKitQuickLook && window.ARKitQuickLook.supported());
 let qlOpenedAt = 0;
 
+// Inside Zappar's App Clip shell the in-scene tracker is fed by native
+// ARKit/ARCore, so the browser-side Quick Look handoff must stand down
+// and let the (now native-quality) in-scene flow do the hanging
+function isInAppClip() {
+    try {
+        return !!(window.ZapparAFrame && ZapparAFrame.isAppClip && ZapparAFrame.isAppClip());
+    } catch (e) {
+        return false;
+    }
+}
+
 // A-Frame bundles its own THREE build
 const THREE = window.AFRAME.THREE;
 
@@ -373,13 +384,18 @@ if (wallLockBtn && arkitMode) {
     });
 }
 
-// In ARKit mode the piece lives in Apple's viewer, not our scene, so the
-// in-scene size / remove / screenshot controls have nothing to act on
-if (arkitMode) {
+// In Quick Look mode the piece lives in Apple's viewer, not our scene, so
+// the in-scene size / remove / screenshot controls have nothing to act on.
+// Inside the App Clip the scene is native-tracked and they come back.
+function setArkitControls(quickLook) {
     ['size-up', 'size-down', 'replace-btn', 'screenshot-btn'].forEach((id) => {
         const el = document.getElementById(id);
-        if (el) el.style.display = 'none';
+        if (el) el.style.display = quickLook ? 'none' : '';
     });
+    // The 🧲 shortcut only belongs to the Quick Look flow — inside the App
+    // Clip shell (and on other devices) rel=ar links are unreliable
+    const magnet = document.getElementById('wall-lock-btn');
+    if (magnet) magnet.style.display = quickLook ? '' : 'none';
 }
 
 function updateDockButtons() { /* dock is static now: 🗑 removes the selected picture */ }
@@ -480,19 +496,22 @@ function setPlacing(active) {
 
 function chooseTracking() {
     if (anchorEl) return;
-    if (arkitMode) {
+    if (arkitMode && !isInAppClip()) {
         // Hanging happens in Apple's ARKit viewer, so the in-browser scene
         // is only the live camera backdrop: no tracker ladder, no anchoring
         trackingMode = 'arkit';
         anchorEl = document.getElementById('instant-anchor');
         anchorEl.object3D.add(galleryGroup);
         anchored = true;
+        setArkitControls(true);
         setHint('Tap a painting — it hangs on your wall in Apple AR');
         clearTimeout(showHint._t);
         showHint._t = setTimeout(hideHint, 8000);
         console.log('tracking mode: arkit (Quick Look)');
         return;
     }
+    setArkitControls(false);
+    if (isInAppClip()) console.log('App Clip shell detected: native tracking feeds the scene');
     const worldEl = document.getElementById('world-anchor');
     const wp = worldEl && worldEl.components['zappar-user-placement'];
     if (wp && wp.placementGroup) {
@@ -941,7 +960,7 @@ function placeArtwork() {
         showStatus('Select an artwork from the strip first');
         return;
     }
-    if (arkitMode) {
+    if (trackingMode === 'arkit') {
         openInARKit(selectedArt);
         return;
     }
@@ -1025,7 +1044,7 @@ function startCoachTour(force) {
 
 function runCoachTour(force) {
     const steps = [
-        { id: 'art-gallery', title: 'The collection', text: 'Tap any painting to hang it on your wall.' + (arkitMode ? ' It opens in Apple AR with true wall tracking.' : '') },
+        { id: 'art-gallery', title: 'The collection', text: 'Tap any painting to hang it on your wall.' + (trackingMode === 'arkit' ? ' It opens in Apple AR with true wall tracking.' : '') },
         { id: 'gallery-toggle', title: 'Artworks', text: 'Show or hide the collection strip.' },
         { id: 'search-toggle', title: 'Search', text: 'Find paintings across museums, modern art and photography.' },
         { id: 'favorites-btn', title: 'Favorites', text: 'Pieces you ♡ are saved here.' },
