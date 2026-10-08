@@ -349,6 +349,31 @@ document.getElementById('measure-btn').addEventListener('click', () => {
 
 document.getElementById('screenshot-btn').addEventListener('click', takeScreenshot);
 
+// Apple-grade wall lock: hands the selected piece to AR Quick Look, where
+// ARKit itself detects the wall and anchors the artwork — native tracking
+// quality from a plain web link (iPhone/iPad Safari only)
+const wallLockBtn = document.getElementById('wall-lock-btn');
+if (wallLockBtn && window.ARKitQuickLook && ARKitQuickLook.supported()) {
+    wallLockBtn.style.display = '';
+    wallLockBtn.addEventListener('click', async () => {
+        const sel = activePicture();
+        const art = (sel && sel.userData.art) || selectedArt;
+        if (!art) {
+            showStatus('Select an artwork from the strip first');
+            return;
+        }
+        const widthM = sel ? sel.userData.originalWidth * sel.userData.scale : 0.8;
+        showStatus('Preparing Apple AR wall view…');
+        try {
+            await ARKitQuickLook.view(art, widthM);
+            showStatus('Point at your wall — ARKit locks it in place');
+        } catch (err) {
+            console.error('Quick Look error:', err);
+            showStatus('Could not open Apple AR for this artwork');
+        }
+    });
+}
+
 function updateDockButtons() { /* dock is static now: 🗑 removes the selected picture */ }
 
 document.getElementById('replace-btn').addEventListener('click', () => {

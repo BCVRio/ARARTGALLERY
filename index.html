@@ -10,6 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;0,900;1,400;1,600&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
+    <script src="arkit-quicklook.js"></script>
     <style>
         * {
             margin: 0;
@@ -1552,6 +1553,7 @@
                 <button class="dock-btn" id="size-down" title="Smaller">➖</button>
                 <button class="dock-btn" id="size-up" title="Larger">➕</button>
                 <button class="dock-btn" id="screenshot-btn" title="Photo">📸</button>
+                <button class="dock-btn" id="wall-lock-btn" title="Apple AR wall lock" style="display: none">🧲</button>
                 <button class="dock-btn" id="more-btn" title="More">⋯</button>
             </div>
 
@@ -1941,6 +1943,33 @@
         });
 
         document.getElementById('screenshot-btn').addEventListener('click', takeScreenshot);
+
+        // Apple-grade wall lock: hands the selected piece to AR Quick Look,
+        // where ARKit itself detects the wall and anchors the artwork —
+        // native tracking quality from a plain web link (iOS Safari only)
+        const wallLockBtn = document.getElementById('wall-lock-btn');
+        if (wallLockBtn && window.ARKitQuickLook && ARKitQuickLook.supported()) {
+            wallLockBtn.style.display = '';
+            wallLockBtn.addEventListener('click', async () => {
+                const art = selectedArt || (currentArtwork && currentArtwork.userData.art);
+                if (!art) {
+                    showStatus('Select an artwork from the strip first');
+                    return;
+                }
+                const widthM = currentArtwork
+                    ? currentArtwork.userData.originalWidth * (typeof currentScale === 'number' ? currentScale : 1)
+                    : 0.8;
+                showStatus('Preparing Apple AR wall view…');
+                try {
+                    await ARKitQuickLook.view(art, widthM);
+                    showStatus('Point at your wall — ARKit locks it in place');
+                } catch (err) {
+                    console.error('Quick Look error:', err);
+                    showStatus('Could not open Apple AR for this artwork');
+                }
+            });
+        }
+
         document.getElementById('more-btn').addEventListener('click', () => {
             shareSheet.classList.add('active');
         });
