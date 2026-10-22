@@ -1367,7 +1367,7 @@
             text-align: center;
             z-index: 20;
         }
-        #hint.fade { opacity: 0; }
+        #hint.fade, #hint.yield { opacity: 0; }
 
         /* Sheets and modals respect the viewport */
         #share-sheet {
@@ -2869,11 +2869,16 @@
             document.getElementById('hint').classList.add('fade');
         }
 
+        // Toasts share the top of the screen with the guidance hint, so the
+        // hint steps aside while a toast is up and returns when it clears
         function showStatus(message) {
             status.textContent = message;
             status.classList.remove('hidden');
-            setTimeout(() => {
+            document.getElementById('hint').classList.add('yield');
+            clearTimeout(showStatus._t);
+            showStatus._t = setTimeout(() => {
                 status.classList.add('hidden');
+                document.getElementById('hint').classList.remove('yield');
             }, 3000);
         }
 

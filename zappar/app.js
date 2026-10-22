@@ -1,9 +1,10 @@
-// AR Art Gallery Pro — Zappar Universal AR edition (A-Frame)
+// AR Art Gallery Pro — Zappar Universal AR edition (three.js)
 //
-// Tracking model: one world-tracked room anchor (zappar-user-placement,
-// instant tracking as fallback). Every hung picture is an independent
-// fixture expressed in anchor-local space, so multiple artworks can sit
-// on different walls at once and all stay locked to the room together.
+// Tracking model: Zappar's world tracker finds the floor; the user sets a
+// wall by aiming at the line where it meets the floor (or, inside the App
+// Clip, at a natively detected wall). The wall is stored relative to a
+// tracked anchor and the artwork hangs on its surface. Zappar's instant
+// tracker is the fallback where no floor can be found.
 
 // On-device diagnostics: the log is always buffered; the overlay shows
 // with ?debug=1 or from ⋯ → Diagnostics (the App Clip has no address bar)
@@ -57,7 +58,6 @@ const frameCallbacks = new Set();
 let galleryGroup = null;        // THREE.Group that holds artwork meshes
 let gesturesWired = false;
 let trackingMode = 'instant';   // 'world' (plane detection) or 'instant' fallback
-let worldGroup = null;          // Zappar UserPlacementAnchorGroup in world mode
 let cameraPaused = false;
 let anchored = false;
 let placedArts = [];            // every hung artwork mesh, each its own fixture
@@ -446,6 +446,15 @@ document.getElementById('tips-btn').addEventListener('click', () => {
     startCoachTour(true);
 });
 
+document.getElementById('rescan-btn').addEventListener('click', () => {
+    shareSheet.classList.remove('active');
+    if (trackingMode === 'world') {
+        resetWall();
+    } else {
+        showStatus('Re-scanning is available in world tracking mode');
+    }
+});
+
 document.getElementById('diag-btn').addEventListener('click', () => {
     shareSheet.classList.remove('active');
     showDiagnostics();
@@ -530,9 +539,10 @@ function initThreeScene() {
         if (!arStarted) return;
         zCamera.updateFrame(renderer);
         if (instantTracker && instantPlacement) {
-            instantTracker.setAnchorPoseFromCameraOffset(0, 0, -3);
+            instantTracker.setAnchorPoseFromCameraOffset(0, 0, -INSTANT_DEPTH);
         }
         frameCallbacks.forEach((cb) => { try { cb(); } catch (e) {} });
+        if (placedArts.length) sampleRoomLight();
         renderer.render(scene, zCamera);
     };
     requestAnimationFrame(loop);
@@ -554,6 +564,312 @@ function setPlacing(active) {
     document.getElementById('ui-overlay').classList.toggle('placing', active);
 }
 
+// ------------------------------------------------------------ walls
+// Zappar's browser tracker only detects horizontal planes (vertical plane
+// detection exists solely behind the native App Clip bridge), so in the
+// browser a wall is defined from the floor: the user aims where the wall
+// meets the floor and taps, and a wall rises from that line, upright and
+// facing them. Where native wall planes exist they are used directly.
+// The wall is stored relative to a tracked anchor (the ground anchor or
+// the wall plane) and the art lives on the wall surface, so it rides the
+// tracker's map corrections instead of floating at a guessed depth.
+const wall = {
+    tracker: null,
+    ui: null,
+    group: null,          // posed each frame: X along the wall, Y up, Z out of the wall
+    ghost: null,
+    baseLine: null,
+    reticle: null,
+    phase: 'scan',        // 'scan' -> 'wall' -> 'hang'
+    ref: null,            // { kind: 'ground' } | { kind: 'plane', id }
+    local: new THREE.Matrix4(),
+    preview: null,        // { world, ref, fromFloor } while choosing a wall
+    fromFloor: false,
+    hintKey: ''
+};
+const INSTANT_DEPTH = 2.5;
+
+function isTracking(status) {
+    return status === ZapparThree.AnchorStatus.ANCHOR_STATUS_TRACKING;
+}
+
+function refPose(ref, out) {
+    const t = wall.tracker;
+    if (!t || !ref) return false;
+    if (ref.kind === 'ground') {
+        if (!isTracking(t.groundAnchor.status)) return false;
+        out.fromArray(t.groundAnchor.pose(zCamera.rawPose, false));
+        return true;
+    }
+    const p = t.planes.get(ref.id);
+    if (!p || !isTracking(p.status)) return false;
+    out.fromArray(p.pose(zCamera.rawPose, false));
+    return true;
+}
+
+function worldUp() {
+    const t = wall.tracker;
+    const m = new THREE.Matrix4();
+    if (t && isTracking(t.groundAnchor.status)) {
+        m.fromArray(t.groundAnchor.pose(zCamera.rawPose, false));
+        return new THREE.Vector3().setFromMatrixColumn(m, 1).normalize();
+    }
+    if (t && isTracking(t.worldAnchor.status)) {
+        m.fromArray(t.worldAnchor.pose(zCamera.rawPose, false));
+        return new THREE.Vector3().setFromMatrixColumn(m, 1).normalize();
+    }
+    return new THREE.Vector3(0, 1, 0);
+}
+
+function aimRay() {
+    zCamera.updateMatrixWorld();
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), zCamera);
+    return raycaster.ray;
+}
+
+// Floor = the ground anchor when tracked, else the lowest horizontal plane
+function floorEstimate(up) {
+    const t = wall.tracker;
+    const m = new THREE.Matrix4();
+    if (isTracking(t.groundAnchor.status)) {
+        m.fromArray(t.groundAnchor.pose(zCamera.rawPose, false));
+        return { point: new THREE.Vector3().setFromMatrixPosition(m), ref: { kind: 'ground' } };
+    }
+    let best = null;
+    for (const p of t.planes.values()) {
+        if (!isTracking(p.status)) continue;
+        m.fromArray(p.pose(zCamera.rawPose, false));
+        const n = new THREE.Vector3().setFromMatrixColumn(m, 1).normalize();
+        if (Math.abs(n.dot(up)) < 0.85) continue;
+        const point = new THREE.Vector3().setFromMatrixPosition(m);
+        const h = point.dot(up);
+        if (!best || h < best.h) best = { h, point, ref: { kind: 'plane', id: p.id } };
+    }
+    return best;
+}
+
+function wallMatrix(origin, normal, up) {
+    const n = normal.clone().normalize();
+    const y = up.clone().addScaledVector(n, -up.dot(n)).normalize();
+    const x = new THREE.Vector3().crossVectors(y, n).normalize();
+    return new THREE.Matrix4().makeBasis(x, y, n).setPosition(origin);
+}
+
+// Where would the wall be if the user tapped now?
+function previewWall() {
+    const t = wall.tracker;
+    const ray = aimRay();
+    const up = worldUp();
+    const toCam = ray.origin;
+    const m = new THREE.Matrix4();
+    const inv = new THREE.Matrix4();
+
+    // Native wall planes (App Clip): hang straight on the detected wall
+    let best = null;
+    for (const p of t.planes.values()) {
+        if (!isTracking(p.status)) continue;
+        m.fromArray(p.pose(zCamera.rawPose, false));
+        const n = new THREE.Vector3().setFromMatrixColumn(m, 1).normalize();
+        if (Math.abs(n.dot(up)) > 0.3) continue;
+        const p0 = new THREE.Vector3().setFromMatrixPosition(m);
+        const denom = ray.direction.dot(n);
+        if (Math.abs(denom) < 0.15) continue;
+        const dist = p0.clone().sub(ray.origin).dot(n) / denom;
+        if (dist < 0.3 || dist > 8) continue;
+        const hit = ray.origin.clone().addScaledVector(ray.direction, dist);
+        // Accept hits within the detected patch, generously extended
+        const local = hit.clone().applyMatrix4(inv.copy(m).invert());
+        const poly = p.polygon;
+        if (poly && poly.length >= 6) {
+            let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+            for (let i = 0; i < poly.length; i += 2) {
+                minX = Math.min(minX, poly[i]); maxX = Math.max(maxX, poly[i]);
+                minZ = Math.min(minZ, poly[i + 1]); maxZ = Math.max(maxZ, poly[i + 1]);
+            }
+            const pad = 0.75;
+            if (local.x < minX - pad || local.x > maxX + pad || local.z < minZ - pad || local.z > maxZ + pad) continue;
+        }
+        if (!best || dist < best.dist) best = { dist, hit, n, id: p.id };
+    }
+    if (best) {
+        const n = best.n.clone();
+        if (n.dot(toCam.clone().sub(best.hit)) < 0) n.negate();
+        return { world: wallMatrix(best.hit, n, up), ref: { kind: 'plane', id: best.id }, fromFloor: false };
+    }
+
+    // Browser: raise the wall from where the aim ray meets the floor
+    const floor = floorEstimate(up);
+    if (!floor) return null;
+    const denom = ray.direction.dot(up);
+    if (denom > -0.08) return null;
+    const dist = floor.point.clone().sub(ray.origin).dot(up) / denom;
+    if (dist < 0.3 || dist > 10) return null;
+    const hit = ray.origin.clone().addScaledVector(ray.direction, dist);
+    const n = toCam.clone().sub(hit);
+    n.addScaledVector(up, -n.dot(up));
+    if (n.length() < 0.15) return null;
+    return { world: wallMatrix(hit, n, up), ref: floor.ref, fromFloor: true };
+}
+
+function poseWallGroup(world) {
+    world.decompose(wall.group.position, wall.group.quaternion, wall.group.scale);
+    wall.group.updateMatrixWorld(true);
+}
+
+// Aim point on the committed wall, in wall-local coordinates
+function wallAimLocal() {
+    const ray = aimRay();
+    const n = new THREE.Vector3().setFromMatrixColumn(wall.group.matrixWorld, 2).normalize();
+    const p0 = new THREE.Vector3().setFromMatrixPosition(wall.group.matrixWorld);
+    const denom = ray.direction.dot(n);
+    if (denom > -0.05) return null;
+    const dist = p0.clone().sub(ray.origin).dot(n) / denom;
+    if (dist < 0.2 || dist > 10) return null;
+    return wall.group.worldToLocal(ray.origin.clone().addScaledVector(ray.direction, dist));
+}
+
+// Point on the wall straight in front of the user, at their eye height
+function wallFrontLocal() {
+    zCamera.updateMatrixWorld();
+    const cam = new THREE.Vector3().setFromMatrixPosition(zCamera.matrixWorld);
+    const local = wall.group.worldToLocal(cam);
+    return new THREE.Vector3(local.x, wall.fromFloor ? Math.max(local.y, 1.2) : local.y, 0);
+}
+
+function buildWallVisuals() {
+    const gold = 0xd4af37;
+    wall.group = new THREE.Group();
+    wall.ghost = new THREE.Mesh(
+        new THREE.PlaneGeometry(2.4, 2.6),
+        new THREE.MeshBasicMaterial({ color: gold, transparent: true, opacity: 0.1, depthWrite: false, side: THREE.DoubleSide })
+    );
+    const edges = new THREE.LineSegments(
+        new THREE.EdgesGeometry(wall.ghost.geometry),
+        new THREE.LineBasicMaterial({ color: gold, transparent: true, opacity: 0.55 })
+    );
+    wall.ghost.add(edges);
+    wall.baseLine = new THREE.Mesh(
+        new THREE.PlaneGeometry(2.4, 0.025),
+        new THREE.MeshBasicMaterial({ color: gold, transparent: true, opacity: 0.95, depthWrite: false, side: THREE.DoubleSide })
+    );
+    wall.baseLine.position.set(0, 0.0125, 0.002);
+    wall.reticle = new THREE.Mesh(
+        new THREE.RingGeometry(0.06, 0.078, 48),
+        new THREE.MeshBasicMaterial({ color: gold, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide })
+    );
+    wall.reticle.position.z = 0.004;
+    wall.group.add(wall.ghost, wall.baseLine, wall.reticle);
+    wall.group.visible = false;
+    scene.add(wall.group);
+}
+
+function wallHint(key, text) {
+    if (wall.hintKey === key) return;
+    wall.hintKey = key;
+    setHint(text);
+}
+
+function enterWallPhase() {
+    wall.phase = 'wall';
+    wall.hintKey = '';
+    try { wall.ui.hide(); } catch (e) {}
+    document.getElementById('skip-scan').classList.add('hidden');
+    setPlacing(true);
+    sfx.select();
+    console.log('floor found; choosing wall. planes:', wall.tracker.planes.size);
+}
+
+function commitWall() {
+    const pv = wall.preview;
+    if (!pv) {
+        showStatus('Aim at where the wall meets the floor, then tap');
+        return;
+    }
+    const ref = new THREE.Matrix4();
+    if (!refPose(pv.ref, ref)) {
+        showStatus('Hold steady a moment, then tap again');
+        return;
+    }
+    wall.ref = pv.ref;
+    wall.fromFloor = pv.fromFloor;
+    wall.local.copy(ref.invert().multiply(pv.world));
+    wall.phase = 'hang';
+    wall.ghost.visible = true;
+    wall.baseLine.visible = false;
+    setTimeout(() => { if (wall.phase === 'hang') wall.ghost.visible = false; }, 900);
+    // Pointing at a plain wall drops tracking quality; Zappar's default
+    // response is to wipe the map after 5s, which throws hung art around.
+    // Keep the map — the user can re-scan from the menu if needed.
+    wall.tracker.resetIfLimitedForMS = 0;
+    anchored = true;
+    setPlacing(false);
+    sfx.anchor();
+    setHint('Wall set — aim where you want it and tap a painting', 6000);
+    console.log('wall committed', wall.ref, 'fromFloor:', wall.fromFloor);
+}
+
+function resetWall() {
+    if (trackingMode !== 'world') return;
+    clearGallery();
+    wall.ref = null;
+    wall.preview = null;
+    anchored = false;
+    try {
+        if (wall.tracker.quality === ZapparThree.WorldTrackerQuality.WORLD_TRACKER_QUALITY_LIMITED) {
+            wall.tracker.reset();
+        }
+    } catch (e) {}
+    wall.tracker.resetIfLimitedForMS = 5000;
+    wall.phase = 'scan';
+    wall.hintKey = '';
+    setPlacing(true);
+    setHint('Re-scanning — pan slowly across the floor');
+}
+
+function worldFrame() {
+    const t = wall.tracker;
+    if (!t || trackingMode !== 'world') return;
+    const quality = t.quality;
+    const Q = ZapparThree.WorldTrackerQuality;
+
+    if (wall.phase === 'scan') {
+        wall.group.visible = false;
+        try { wall.ui.show(); wall.ui.update(); } catch (e) {}
+        if (quality !== Q.WORLD_TRACKER_QUALITY_INITIALIZING && floorEstimate(worldUp())) {
+            enterWallPhase();
+        }
+        return;
+    }
+
+    if (wall.phase === 'wall') {
+        wall.preview = previewWall();
+        if (!wall.preview) {
+            wall.group.visible = false;
+            wallHint('down', 'Tilt down to where your wall meets the floor');
+            return;
+        }
+        poseWallGroup(wall.preview.world);
+        wall.group.visible = true;
+        wall.ghost.visible = true;
+        wall.ghost.position.set(0, wall.preview.fromFloor ? 1.3 : 0, 0);
+        wall.baseLine.visible = wall.preview.fromFloor;
+        wall.reticle.position.set(0, wall.preview.fromFloor ? 0.12 : 0, 0.004);
+        wallHint(wall.preview.fromFloor ? 'base' : 'native',
+            wall.preview.fromFloor
+                ? 'Line up the gold edge with the bottom of your wall, then tap'
+                : 'Wall found — tap to lock it');
+        return;
+    }
+
+    // Hanging: the wall follows its anchor; the reticle marks the aim point
+    const ref = new THREE.Matrix4();
+    if (refPose(wall.ref, ref)) poseWallGroup(ref.multiply(wall.local));
+    wall.group.visible = true;
+    const aim = wallAimLocal();
+    wall.reticle.visible = !!aim;
+    if (aim) wall.reticle.position.set(aim.x, aim.y, 0.004);
+}
+
 function chooseTracking() {
     if (anchorNode) return;
     if (arkitMode && !isInAppClip()) {
@@ -573,201 +889,88 @@ function chooseTracking() {
     }
     setArkitControls(false);
     if (isInAppClip()) console.log('App Clip shell detected: native tracking feeds the scene');
-    let wp = null;
+    try { localStorage.removeItem('arWorldFailed'); } catch (e) {}
+
     try {
-        // Build Zappar's world placement directly on the three.js SDK — the
-        // same pieces the old A-Frame component assembled for us
-        const tracker = new ZapparThree.WorldTracker();
-        const placementGroup = new ZapparThree.UserPlacementAnchorGroup(zCamera, tracker, renderer);
-        placementGroup.placeOnPlanes = true;
-        placementGroup.placeOnGround = false;
-        placementGroup.visualizePlanesDuringPlacement = true;
-        placementGroup.placeButtonText = 'Place here';
-        placementGroup.showRestartPlacementButton = false;
-        scene.add(placementGroup);
-        const initializationUI = new ZapparThree.WorldTrackerUI(renderer.domElement);
-        wp = { tracker, placementGroup, initializationUI, data: { showInitializationUI: true } };
-        frameCallbacks.add(() => {
-            if (placementGroup.ready) {
-                initializationUI.hide();
-            } else if (wp.data.showInitializationUI) {
-                initializationUI.show();
-                initializationUI.update();
-            }
-        });
+        wall.tracker = new ZapparThree.WorldTracker();
+        wall.ui = new ZapparThree.WorldTrackerUI(renderer.domElement);
     } catch (e) {
         console.log('world tracker unavailable:', e && e.message);
-        wp = null;
+        wall.tracker = null;
     }
-    if (wp && wp.placementGroup) {
-        trackingMode = 'world';
-        worldGroup = wp.placementGroup;
-        worldGroup.longPressToMove = 'none';
-        worldGroup.showPlaceButton = false;
-        anchorNode = worldGroup.contentGroup;
-        setPlacing(true);
-        setHint('Aim at your wall and pan slowly so the room gets mapped…');
 
-        // Walls matter most: vertical plane detection is off by default.
-        // The native-bridged tracker inside the App Clip does not implement
-        // the "supported" query at all (it throws), yet ARKit/ARCore detect
-        // walls fine — so always switch it on, and only report the query
-        let verticalSupported = true;
-        try { verticalSupported = wp.tracker.verticalPlaneDetectionSupported !== false; }
-        catch (e) { console.log('vertical plane support query unavailable (native bridge) — enabling anyway'); }
-        try {
-            wp.tracker.verticalPlaneDetectionEnabled = true;
-            console.log('wall (vertical plane) detection enabled; reported support:', verticalSupported);
-        } catch (e) { console.log('could not enable vertical plane detection:', e && e.message); }
-
-        // Zappar's native scan -> reticle -> place flow does the initial
-        // anchoring (it seeds the world map most reliably); we only gate WHEN
-        // its Place button appears, and retire its UI forever after placing.
-        const t0 = Date.now();
-        // If this environment refused to world-track before, don't make the
-        // user sit through the full ladder again
-        // Inside the App Clip the tracker is native ARKit/ARCore: it does
-        // not fail the way browser vision can, so never fast-fail it on a
-        // remembered browser failure, and give it a long leash
-        const nativeShell = isInAppClip();
-        const failedBefore = !nativeShell && (() => { try { return localStorage.getItem('arWorldFailed') === '1'; } catch (e) { return false; } })();
-        const skipAfter = nativeShell ? 20000 : (failedBefore ? 2000 : 6000);
-        const capAfter = nativeShell ? 90000 : (failedBefore ? 9000 : 25000);
-        let buttonShown = false;
-        let sawAiming = false;
-        let placedByButton = false;
-        let settled = false;
-
-        // A real tap on Zappar's own Place button is an unambiguous signal
-        document.addEventListener('click', (e) => {
-            if (e.target.closest && e.target.closest('.zappar-three-place-ui')) {
-                placedByButton = true;
-            }
-        }, true);
-
-        const removePlaceOverlay = () => {
-            document.querySelectorAll('.zappar-three-place-ui').forEach(el => el.remove());
-        };
-
-        const settle = () => {
-            settled = true;
-            skipBtn.classList.add('hidden');
-            try { localStorage.removeItem('arWorldFailed'); } catch (e) {}
-            anchored = true;
-            setPlacing(false);
-            hideHint();
-            // Their scan card and button never return; our status line takes
-            // over any relocalization messaging
-            worldGroup.showPlaceButton = false;
-            removePlaceOverlay();
-            try {
-                wp.data.showInitializationUI = false;
-                if (wp.initializationUI) wp.initializationUI.hide();
-            } catch (e) {}
-            sfx.anchor();
-            showStatus('Wall locked — tap artwork in the strip to hang it');
-            if (pendingTemplate) {
-                buildTemplate(pendingTemplate);
-                pendingTemplate = null;
-            }
-        };
-
-        const skipBtn = document.getElementById('skip-scan');
-
-        const fallbackToInstant = () => {
-            clearInterval(poll);
-            skipBtn.classList.add('hidden');
-            // Remember that this environment would not world-track, so the
-            // next session goes to simple mode much faster (browser only —
-            // a native-shell timeout says nothing about the browser)
-            if (!nativeShell) { try { localStorage.setItem('arWorldFailed', '1'); } catch (e) {} }
-            removePlaceOverlay();
-            try { worldGroup.enabled = false; } catch (e) {}
-            try { worldGroup.visible = false; } catch (e) {}
-            try {
-                wp.data.showInitializationUI = false;
-                if (wp.initializationUI) wp.initializationUI.hide();
-            } catch (e) {}
-            if (galleryGroup.parent === anchorNode) {
-                anchorNode.remove(galleryGroup);
-            }
-            trackingMode = 'instant';
-            worldGroup = null;
-            ensureInstantTracking();
-            instantTracker.enabled = true;
-            instantPlacement = true;
-            anchorNode = instantGroup;
-            anchorNode.add(galleryGroup);
-            anchored = false;
-            setPlacing(false);
-            setHint('Simple mode — aim at your wall and tap once to set it');
-            clearTimeout(showHint._t);
-            showHint._t = setTimeout(hideHint, 8000);
-        };
-        skipBtn.addEventListener('click', fallbackToInstant);
-
-        const poll = setInterval(() => {
-            let ready = false;
-            try { ready = worldGroup.ready === true; } catch (e) {}
-            const elapsed = Date.now() - t0;
-
-            if (!settled) {
-                // Scanning / aiming phase
-                if (ready && !buttonShown && elapsed >= 3000) {
-                    buttonShown = true;
-                    worldGroup.showPlaceButton = true;
-                    setHint(null);
-                    showStatus('Aim at your wall, then tap "Place here"');
-                }
-                if (buttonShown && ready && worldGroup._placementMode === true) {
-                    sawAiming = true;
-                }
-                // Placed only on a genuine aiming -> placed transition or a
-                // real tap on their button — a placementMode that simply
-                // never rose must not read as already-placed
-                const placed = buttonShown && ready &&
-                    worldGroup._placementMode === false &&
-                    (sawAiming || placedByButton);
-                if (placed) {
-                    settle();
-                    return;
-                }
-                if (!ready && elapsed > skipAfter && placedArts.length === 0) {
-                    skipBtn.classList.remove('hidden');
-                }
-                if (!ready && elapsed > capAfter && placedArts.length === 0) {
-                    fallbackToInstant();
-                    return;
-                }
-                // Coach only while the wall is still empty — once a piece
-                // hangs, the guided photo flow owns the hint line
-                if (!ready && elapsed > 12000 && !poll._coached && placedArts.length === 0 && !anchored) {
-                    poll._coached = true;
-                    setHint('Still mapping — step back a little, aim at wall detail; more light helps…');
-                }
-                return;
-            }
-
-            // Settled phase: keep their UI retired and placement pinned shut
-            worldGroup.showPlaceButton = false;
-            removePlaceOverlay();
-            try {
-                wp.data.showInitializationUI = false;
-                if (wp.initializationUI) wp.initializationUI.hide();
-            } catch (e) {}
-            if (ready && worldGroup._placementMode !== false) {
-                try { worldGroup.placementMode = false; } catch (e) { worldGroup._placementMode = false; }
-            }
-        }, 300);
-    } else {
-        trackingMode = 'instant';
-        ensureInstantTracking();
-        instantTracker.enabled = true;
-        instantPlacement = true;
-        anchorNode = instantGroup;
+    if (!wall.tracker) {
+        startInstantMode('World tracking is unavailable here — using simple mode');
+        return;
     }
+
+    trackingMode = 'world';
+    let verticalSupported = false;
+    try { verticalSupported = wall.tracker.verticalPlaneDetectionSupported !== false; }
+    catch (e) { verticalSupported = true; }
+    try { wall.tracker.verticalPlaneDetectionEnabled = true; } catch (e) {}
+    console.log('world tracking; native wall detection:', verticalSupported);
+
+    buildWallVisuals();
+    anchorNode = wall.group;
     anchorNode.add(galleryGroup);
+    frameCallbacks.add(worldFrame);
+    wall.tracker.onQualityLimited.bind(() => {
+        if (wall.phase === 'hang') {
+            setHint('Tracking is catching up — include some furniture or edges in view', 4000);
+        }
+    });
+
+    setPlacing(true);
+    setHint('Point at the floor near your wall and pan slowly');
+
+    const skipBtn = document.getElementById('skip-scan');
+    skipBtn.addEventListener('click', () => {
+        if (wall.phase !== 'hang') startInstantMode('Simple mode — aim at your wall, then tap a painting');
+    });
+    const t0 = Date.now();
+    const poll = setInterval(() => {
+        if (trackingMode !== 'world' || wall.phase !== 'scan') {
+            skipBtn.classList.add('hidden');
+            if (trackingMode !== 'world' || wall.phase === 'hang') clearInterval(poll);
+            return;
+        }
+        const elapsed = Date.now() - t0;
+        if (elapsed > 10000) skipBtn.classList.remove('hidden');
+        if (elapsed > 15000 && !poll._coached) {
+            poll._coached = true;
+            setHint('Still mapping — step back, include the floor and some furniture; more light helps');
+        }
+        if (elapsed > 45000) {
+            clearInterval(poll);
+            startInstantMode('Simple mode — aim at your wall, then tap a painting');
+        }
+    }, 500);
     console.log('tracking mode:', trackingMode);
+}
+
+// Fallback without a floor: Zappar's instant tracker. Hanging re-anchors at
+// the aim point and the art sits exactly on that anchor (not in front of
+// it), so what it tracks and what you see coincide.
+function startInstantMode(message) {
+    if (wall.tracker) {
+        try { wall.tracker.enabled = false; } catch (e) {}
+        try { wall.ui.hide(); } catch (e) {}
+    }
+    frameCallbacks.delete(worldFrame);
+    if (wall.group) wall.group.visible = false;
+    if (galleryGroup.parent) galleryGroup.parent.remove(galleryGroup);
+    trackingMode = 'instant';
+    ensureInstantTracking();
+    instantTracker.enabled = true;
+    instantPlacement = true;
+    anchorNode = instantGroup;
+    anchorNode.add(galleryGroup);
+    anchored = true;
+    setPlacing(false);
+    document.getElementById('skip-scan').classList.add('hidden');
+    setHint(message, 8000);
+    console.log('tracking mode: instant');
 }
 
 async function initAR() {
@@ -971,26 +1174,33 @@ function dragPicture(mesh, dx, dy) {
     const anchorQuat = new THREE.Quaternion();
     anchorNode.getWorldQuaternion(anchorQuat);
     delta.applyQuaternion(anchorQuat.invert());
+    if (trackingMode === 'world') delta.z = 0;
 
     mesh.position.add(delta);
 }
 
 function setSelectedPicture(mesh) {
     if (selectedPlaced && selectedPlaced.userData.frame) {
-        selectedPlaced.userData.frame.material.color.setHex(0x8c6a1f);
+        selectedPlaced.userData.frameBase = 0x8c6a1f;
+        applyRoomLight(selectedPlaced);
     }
     selectedPlaced = mesh;
     if (mesh && mesh.userData.frame) {
-        mesh.userData.frame.material.color.setHex(0xf5d87a);
+        mesh.userData.frameBase = 0xf5d87a;
+        applyRoomLight(mesh);
     }
     if (measurementMode) updateMeasurement();
 }
 
 function removePicture(mesh) {
-    galleryGroup.remove(mesh);
+    if (mesh.parent) mesh.parent.remove(mesh);
     if (mesh.userData.frame) {
         mesh.userData.frame.geometry.dispose();
         mesh.userData.frame.material.dispose();
+    }
+    if (mesh.userData.shadow) {
+        mesh.userData.shadow.geometry.dispose();
+        mesh.userData.shadow.material.dispose();
     }
     mesh.geometry.dispose();
     if (mesh.material.map) mesh.material.map.dispose();
@@ -1002,15 +1212,9 @@ function removePicture(mesh) {
 }
 
 function onTap(target) {
-    if (trackingMode === 'world') {
-        // Until the user confirms a wall, taps belong to Zappar's placement UI
-        if (!anchored) return;
-    } else if (!anchored) {
-        instantPlacement = false;
-        anchored = true;
-        hideHint();
-        showStatus('Anchored — tap artwork in the strip to hang it');
-        updateDockButtons();
+    if (trackingMode === 'world' && wall.phase !== 'hang') {
+        if (wall.phase === 'wall') commitWall();
+        return;
     }
 
     if (target) {
@@ -1063,8 +1267,108 @@ function makeArtMesh(texture, width, art) {
     frame.position.z = -0.004;
     mesh.add(frame);
 
-    mesh.userData = { originalWidth: width, originalHeight: height, art, scale: 1, frame };
+    // Soft contact shadow on the wall, slightly below the frame, so the
+    // piece reads as hanging rather than pasted on
+    const shadow = new THREE.Mesh(
+        new THREE.PlaneGeometry(width * 1.06 * 1.52, height * 1.06 * 1.52),
+        new THREE.MeshBasicMaterial({ map: shadowTexture(), color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false })
+    );
+    shadow.position.set(width * 0.01, -height * 0.03, -0.008);
+    shadow.renderOrder = -1;
+    mesh.add(shadow);
+
+    mesh.userData = { originalWidth: width, originalHeight: height, art, scale: 1, frame, shadow, frameBase: 0x8c6a1f };
+    applyRoomLight(mesh);
     return mesh;
+}
+
+// ------------------------------------------------------- room lighting
+// Every ~0.4s the camera feed is drawn into a 16x16 target and averaged:
+// its brightness dims the art in darker rooms and its colour cast (warm
+// lamps, cool daylight) tints it, so the piece sits in the room's light.
+const roomLight = {
+    color: new THREE.Color(1, 1, 1),
+    level: 1,
+    shadow: 0.35,
+    target: null, scene: null, cam: null, buf: null, last: 0, logged: 0
+};
+
+function sampleRoomLight() {
+    const now = performance.now();
+    if (now - roomLight.last < 400) return;
+    roomLight.last = now;
+    try {
+        if (!roomLight.target) {
+            roomLight.target = new THREE.WebGLRenderTarget(16, 16);
+            roomLight.scene = new THREE.Scene();
+            roomLight.cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+            roomLight.scene.add(new THREE.Mesh(
+                new THREE.PlaneGeometry(2, 2),
+                new THREE.MeshBasicMaterial({ map: zCamera.backgroundTexture })
+            ));
+            roomLight.buf = new Uint8Array(16 * 16 * 4);
+        }
+        renderer.setRenderTarget(roomLight.target);
+        renderer.render(roomLight.scene, roomLight.cam);
+        renderer.setRenderTarget(null);
+        renderer.readRenderTargetPixels(roomLight.target, 0, 0, 16, 16, roomLight.buf);
+    } catch (e) {
+        renderer.setRenderTarget(null);
+        return;
+    }
+    let r = 0, g = 0, b = 0;
+    const px = roomLight.buf.length / 4;
+    for (let i = 0; i < roomLight.buf.length; i += 4) {
+        r += roomLight.buf[i]; g += roomLight.buf[i + 1]; b += roomLight.buf[i + 2];
+    }
+    r /= px * 255; g /= px * 255; b /= px * 255;
+    const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    if (lum < 0.003) return; // no camera frame yet
+    const avg = (r + g + b) / 3;
+    // Grey-world colour cast, blended 40% and capped at ±12% per channel:
+    // enough to pick up warm lamps or cool daylight, but a strongly
+    // coloured wall must never repaint the artwork
+    const cast = (c) => Math.min(1.12, Math.max(0.88, 1 + 0.4 * (c / avg - 1)));
+    const tint = new THREE.Color(cast(r), cast(g), cast(b));
+    const tLum = 0.2126 * tint.r + 0.7152 * tint.g + 0.0722 * tint.b;
+    tint.multiplyScalar(1 / tLum);
+    const level = Math.min(1, Math.max(0.55, 0.55 + 0.5 * Math.sqrt(lum / 0.2)));
+    roomLight.color.lerp(tint, 0.25);
+    roomLight.level += (level - roomLight.level) * 0.25;
+    roomLight.shadow += (Math.min(0.5, Math.max(0.2, 0.2 + 1.2 * lum)) - roomLight.shadow) * 0.25;
+    placedArts.forEach(applyRoomLight);
+    if (now - roomLight.logged > 5000) {
+        roomLight.logged = now;
+        console.log('room light: lum', lum.toFixed(3), 'level', roomLight.level.toFixed(2),
+            'tint', roomLight.color.r.toFixed(2), roomLight.color.g.toFixed(2), roomLight.color.b.toFixed(2));
+    }
+}
+
+function applyRoomLight(mesh) {
+    const k = roomLight.level;
+    const c = roomLight.color;
+    const clamp = (v) => Math.min(1, v);
+    mesh.material.color.setRGB(clamp(c.r * k), clamp(c.g * k), clamp(c.b * k));
+    const f = mesh.userData.frame;
+    if (f) {
+        const base = new THREE.Color(mesh.userData.frameBase || 0x8c6a1f);
+        f.material.color.setRGB(clamp(base.r * c.r * k), clamp(base.g * c.g * k), clamp(base.b * c.b * k));
+    }
+    if (mesh.userData.shadow) mesh.userData.shadow.material.opacity = roomLight.shadow;
+}
+
+let _shadowTex = null;
+function shadowTexture() {
+    if (_shadowTex) return _shadowTex;
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const g = c.getContext('2d');
+    g.shadowColor = 'rgba(0,0,0,1)';
+    g.shadowBlur = 18;
+    g.fillStyle = 'rgba(0,0,0,1)';
+    g.fillRect(22, 22, 84, 84);
+    _shadowTex = new THREE.CanvasTexture(c);
+    return _shadowTex;
 }
 
 function placeArtwork() {
@@ -1078,7 +1382,23 @@ function placeArtwork() {
     }
 
     const placingArt = selectedArt;
-    const pose = aimPoseInAnchor(2);
+    let pose;
+    if (trackingMode === 'world') {
+        if (wall.phase !== 'hang') {
+            showStatus('Set your wall first — aim where it meets the floor and tap');
+            return;
+        }
+        // On the wall surface at the aim point, upright (wall-local XY)
+        const spot = wallAimLocal() || wallFrontLocal();
+        pose = { pos: new THREE.Vector3(spot.x, spot.y, 0.012), quat: new THREE.Quaternion() };
+    } else if (trackingMode === 'instant') {
+        instantTracker.setAnchorPoseFromCameraOffset(0, 0, -INSTANT_DEPTH);
+        instantPlacement = false;
+        anchored = true;
+        pose = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() };
+    } else {
+        pose = aimPoseInAnchor(2);
+    }
     loadArtTexture(placingArt, (texture) => {
         // One piece at a time: web AR holds a single fixture well, a crowd
         // poorly — the flow is hang, photograph, then try the next one
@@ -1086,6 +1406,10 @@ function placeArtwork() {
         const mesh = makeArtMesh(texture, 1, placingArt);
         mesh.position.copy(pose.pos);
         mesh.quaternion.copy(pose.quat);
+        // Never let a floor-based wall hang the piece into the floor
+        if (trackingMode === 'world' && wall.fromFloor) {
+            mesh.position.y = Math.max(mesh.position.y, mesh.userData.originalHeight * 0.53 + 0.15);
+        }
         galleryGroup.add(mesh);
         placedArts.push(mesh);
         setSelectedPicture(mesh);
@@ -1164,7 +1488,7 @@ function runCoachTour(force) {
         { id: 'replace-btn', title: 'Remove', text: 'Takes the selected piece off the wall.' },
         { id: 'screenshot-btn', title: 'Photo', text: 'Saves a picture of your wall with the art in place.' },
         { id: 'wall-lock-btn', title: 'Apple AR', text: 'Re-opens the current piece with ARKit wall tracking.' },
-        { id: 'more-btn', title: 'More', text: 'Sharing, measurements and the rest live here.' },
+        { id: 'more-btn', title: 'More', text: 'Sharing, measurements, and Re-set wall if you move rooms.' },
         { id: 'exit-ar-btn', title: 'Exit', text: 'Back to the menu.' }
     ];
     CoachMarks.start(steps, { force: force === true });
@@ -1598,11 +1922,16 @@ function hideHint() {
     document.getElementById('hint').classList.add('fade');
 }
 
+// Toasts share the top of the screen with the guidance hint, so the hint
+// steps aside while a toast is up and returns when it clears
 function showStatus(message) {
     status.textContent = message;
     status.classList.remove('hidden');
-    setTimeout(() => {
+    document.getElementById('hint').classList.add('yield');
+    clearTimeout(showStatus._t);
+    showStatus._t = setTimeout(() => {
         status.classList.add('hidden');
+        document.getElementById('hint').classList.remove('yield');
     }, 3000);
 }
 
