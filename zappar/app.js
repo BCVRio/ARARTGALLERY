@@ -543,6 +543,10 @@ searchInput.addEventListener('keypress', (e) => {
 document.getElementById('apply-template-btn').addEventListener('click', applyTemplate);
 
 document.addEventListener('click', (e) => {
+    const linksSheet = document.getElementById('links-sheet');
+    if (linksSheet && !linksSheet.contains(e.target) && e.target.id !== 'buy-btn') {
+        linksSheet.classList.remove('active');
+    }
     if (!shareSheet.contains(e.target) && e.target.id !== 'more-btn') {
         shareSheet.classList.remove('active');
     }
@@ -1075,7 +1079,7 @@ async function initAR() {
     }
 
     if (artworks.length === 0) {
-        await searchArt('impressionism');
+        await searchArt('');
     }
 }
 
@@ -1432,7 +1436,7 @@ function placeArtwork() {
         // One piece at a time: web AR holds a single fixture well, a crowd
         // poorly — the flow is hang, photograph, then try the next one
         clearGallery();
-        const mesh = makeArtMesh(texture, 1, placingArt);
+        const mesh = makeArtMesh(texture, ArtCatalog.hangWidthM(placingArt, 1), placingArt);
         mesh.position.copy(pose.pos);
         mesh.quaternion.copy(pose.quat);
         // Never let a floor-based wall hang the piece into the floor
@@ -1532,7 +1536,7 @@ function runCoachTour(force) {
 // ------------------------------------------------------------ ARKit flow
 async function openInARKit(art) {
     const sel = activePicture();
-    const widthM = sel ? sel.userData.originalWidth * sel.userData.scale : 0.8;
+    const widthM = sel ? sel.userData.originalWidth * sel.userData.scale : ArtCatalog.hangWidthM(art, 0.8);
     showStatus('Opening on your wall…');
     qlOpenedAt = Date.now();
     try {
@@ -1605,70 +1609,120 @@ function buildTemplate(template) {
     });
 }
 
+// Results come from the shipped catalogue (thousands of works, searched on
+// the device), topped up with a live Wikimedia search when a query finds
+// little, and shown in the strip a page at a time
+const PAGE_SIZE = 24;
+let resultSet = [];
+let resultTotal = 0;
+
+function matchesQuery(q) {
+    const tokens = String(q || '').toLowerCase().split(/\s+/).filter(Boolean);
+    return (art) => {
+        const hay = `${art.title} ${art.artist} ${art.medium || ''}`.toLowerCase();
+        return tokens.every((t) => hay.includes(t));
+    };
+}
+
+async function searchCommons(searchQuery) {
+    // Wikimedia Commons: reliable hotlinking with CORS headers, which WebGL
+    // textures require
+    const api = 'https://commons.wikimedia.org/w/api.php?action=query&generator=search' +
+        `&gsrsearch=${encodeURIComponent(searchQuery + ' painting')}&gsrnamespace=6&gsrlimit=18` +
+        '&prop=imageinfo&iiprop=url%7Cmime%7Cextmetadata&iiurlwidth=1000&format=json&origin=*';
+    const response = await fetch(api);
+    const data = await response.json();
+    const strip = (f) => f && f.value ? f.value.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() : '';
+    // Some Commons titles carry raw Wikidata qualifiers
+    // ('… title QS:P1476,en:"…" label QS:Len,…'); keep the English
+    // title when one is quoted, otherwise fall back to the filename
+    const cleanTitle = (t) => {
+        if (!t || !/QS:/.test(t)) return t || '';
+        const m = t.match(/en:"([^"]+)"/);
+        return m ? m[1] : '';
+    };
+    return Object.values((data.query && data.query.pages) || {})
+        .sort((a, b) => (a.index || 0) - (b.index || 0))
+        .map(p => ({ page: p, info: (p.imageinfo || [])[0] }))
+        .filter(x => x.info && x.info.thumburl && /^image\/(jpeg|png)/.test(x.info.mime || ''))
+        .map(({ page, info }) => {
+            const meta = info.extmetadata || {};
+            const fallbackTitle = page.title.replace(/^File:/, '').replace(/\.[^.]+$/, '').replace(/_/g, ' ');
+            const art = {
+                id: 'commons-' + page.pageid,
+                title: cleanTitle(strip(meta.ObjectName)) || fallbackTitle,
+                artist: strip(meta.Artist) || 'Unknown artist',
+                date: strip(meta.DateTimeOriginal),
+                imageUrl: info.thumburl,
+                thumbnailUrl: info.thumburl.includes('/1000px-')
+                    ? info.thumburl.replace('/1000px-', '/320px-')
+                    : info.thumburl,
+                source: 'Wikimedia Commons',
+                museumUrl: info.descriptionurl,
+                tags: []
+            };
+            art.printUrl = ArtCatalog.printUrl(art);
+            return art;
+        });
+}
+
 async function searchArt(query = null) {
-    const searchQuery = query || searchInput.value || 'monet';
+    const searchQuery = (query !== null ? String(query) : searchInput.value).trim();
     showStatus('Searching artworks...');
 
     try {
-        let artworksData = [];
+        let items = [];
+        let total = 0;
+        let note = '';
 
         if (currentSource === 'museum') {
-            // Wikimedia Commons: reliable hotlinking with CORS headers, which WebGL
-            // textures require (the Art Institute's image CDN now sits behind a bot
-            // challenge and 403s embedded images)
-            const api = 'https://commons.wikimedia.org/w/api.php?action=query&generator=search' +
-                `&gsrsearch=${encodeURIComponent(searchQuery + ' painting')}&gsrnamespace=6&gsrlimit=18` +
-                '&prop=imageinfo&iiprop=url%7Cmime%7Cextmetadata&iiurlwidth=1000&format=json&origin=*';
-            const response = await fetch(api);
-            const data = await response.json();
-            const strip = (f) => f && f.value ? f.value.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() : '';
-            // Some Commons titles carry raw Wikidata qualifiers
-            // ('… title QS:P1476,en:"…" label QS:Len,…'); keep the English
-            // title when one is quoted, otherwise fall back to the filename
-            const cleanTitle = (t) => {
-                if (!t || !/QS:/.test(t)) return t || '';
-                const m = t.match(/en:"([^"]+)"/);
-                return m ? m[1] : '';
-            };
-
-            artworksData = Object.values((data.query && data.query.pages) || {})
-                .sort((a, b) => (a.index || 0) - (b.index || 0))
-                .map(p => ({ page: p, info: (p.imageinfo || [])[0] }))
-                .filter(x => x.info && x.info.thumburl && /^image\/(jpeg|png)/.test(x.info.mime || ''))
-                .map(({ page, info }) => {
-                    const meta = info.extmetadata || {};
-                    const fallbackTitle = page.title.replace(/^File:/, '').replace(/\.[^.]+$/, '').replace(/_/g, ' ');
-                    return {
-                        id: page.pageid,
-                        title: cleanTitle(strip(meta.ObjectName)) || fallbackTitle,
-                        artist: strip(meta.Artist) || 'Unknown artist',
-                        date: strip(meta.DateTimeOriginal),
-                        imageUrl: info.thumburl,
-                        thumbnailUrl: info.thumburl.includes('/1000px-')
-                            ? info.thumburl.replace('/1000px-', '/320px-')
-                            : info.thumburl,
-                        source: 'Wikimedia Commons',
-                        purchaseUrl: info.descriptionurl
-                    };
-                });
-        } else if (currentSource === 'modern') {
-            artworksData = curatedCollection('modern', 'Modern Collection');
+            try {
+                const r = await ArtCatalog.search(searchQuery, { kind: 'painting' });
+                items = r.items;
+                total = r.total;
+            } catch (e) {
+                console.log('catalogue unavailable:', e && e.message);
+            }
+            if (searchQuery && items.length < 12) {
+                try {
+                    const live = (await searchCommons(searchQuery)).filter(l => !items.some(i => i.id === l.id));
+                    items = items.concat(live);
+                    total += live.length;
+                } catch (e) {
+                    console.log('live search unavailable:', e && e.message);
+                }
+            }
         } else if (currentSource === 'photography') {
-            artworksData = curatedCollection('photography', 'Photography Collection');
-        } else if (currentSource === 'nft') {
-            artworksData = generatePlaceholderArt('NFT Collection', searchQuery);
+            const curated = curatedCollection('photography', 'Photography Collection').filter(matchesQuery(searchQuery));
+            let cat = { items: [], total: 0 };
+            try { cat = await ArtCatalog.search(searchQuery, { kind: 'photo' }); } catch (e) {}
+            items = curated.concat(cat.items);
+            total = curated.length + cat.total;
+        } else if (currentSource === 'modern') {
+            items = curatedCollection('modern', 'Modern Collection').filter(matchesQuery(searchQuery));
+            total = items.length;
+        } else if (currentSource === 'forsale') {
+            const r = await ArtCatalog.forSale(searchQuery);
+            items = r.items;
+            total = r.total;
+            if (!r.galleryCount) note = 'No galleries listed yet — see catalog/galleries.json to add one';
         }
 
-        artworks = artworksData;
-        displayArtGallery();
+        resultSet = items;
+        resultTotal = total;
+        artworks = [];
+        showMoreResults();
+        artGallery.scrollLeft = 0;
         artGallery.classList.remove('peek');
         artGallery.classList.add('open');
         document.getElementById('gallery-toggle').classList.add('active');
         searchPanel.classList.remove('open');
-        status.classList.add('hidden');
 
         if (artworks.length === 0) {
-            showStatus('No artworks found. Try a different search.');
+            showStatus(note || 'No artworks found. Try a different search.');
+        } else {
+            const what = currentSource === 'forsale' ? 'for sale' : 'works';
+            showStatus(`${total.toLocaleString()} ${what}${searchQuery ? ` for “${searchQuery}”` : ''}`);
         }
     } catch (error) {
         console.error('Search error:', error);
@@ -1676,23 +1730,21 @@ async function searchArt(query = null) {
     }
 }
 
-function generatePlaceholderArt(category, query) {
-    // Placeholder for other art sources (you'd integrate real APIs here)
-    return Array.from({ length: 10 }, (_, i) => ({
-        id: `${category}-${i}`,
-        title: `${query} ${category} #${i + 1}`,
-        artist: `Artist ${i + 1}`,
-        imageUrl: `https://picsum.photos/800/1000?random=${Date.now()}-${i}`,
-        thumbnailUrl: `https://picsum.photos/200/250?random=${Date.now()}-${i}`,
-        source: category,
-        purchaseUrl: '#',
-        price: `$${(Math.random() * 1000 + 100).toFixed(2)}`
-    }));
+function showMoreResults() {
+    const next = resultSet.slice(artworks.length, artworks.length + PAGE_SIZE);
+    artworks = artworks.concat(next);
+    displayArtGallery();
+}
+
+function priceLabel(art) {
+    if (!art.price) return '';
+    return /^[\d.,]+$/.test(String(art.price)) ? `$${art.price}` : art.price;
 }
 
 function displayArtGallery() {
     artGallery.innerHTML = '';
 
+    const esc = (t) => String(t || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     artworks.forEach((art, index) => {
         const isFavorite = favorites.some(f => f.id === art.id);
 
@@ -1707,9 +1759,9 @@ function displayArtGallery() {
             <div class="favorite-btn ${isFavorite ? 'active' : ''}" onclick="toggleFavorite(event, ${index})">
                 ${isFavorite ? '❤️' : '🤍'}
             </div>
-            ${art.price ? `<div class="buy-badge">$${art.price}</div>` : ''}
-            <img crossorigin="anonymous" src="${art.thumbnailUrl}" alt="${art.title}" onerror="this.src='assets/brand/art-placeholder.jpg'">
-            <div class="art-item-title">${art.title}</div>
+            ${art.price ? `<div class="buy-badge">${esc(priceLabel(art))}</div>` : ''}
+            <img crossorigin="anonymous" loading="lazy" src="${esc(art.thumbnailUrl)}" alt="${esc(art.title)}" onerror="this.src='assets/brand/art-placeholder.jpg'">
+            <div class="art-item-title" title="${esc(art.title)} — ${esc(art.artist)}">${esc(art.title)}<span class="art-item-artist">${esc(art.artist)}</span></div>
         `;
 
         artItem.addEventListener('click', (e) => {
@@ -1729,6 +1781,14 @@ function displayArtGallery() {
 
         artGallery.appendChild(artItem);
     });
+
+    if (resultSet.length > artworks.length) {
+        const more = document.createElement('div');
+        more.className = 'art-item art-more';
+        more.innerHTML = `<div class="art-more-label">More<br><small>${(resultSet.length - artworks.length).toLocaleString()} left</small></div>`;
+        more.addEventListener('click', (e) => { e.stopPropagation(); showMoreResults(); });
+        artGallery.appendChild(more);
+    }
 }
 
 function toggleFavorite(event, index) {
@@ -1828,20 +1888,36 @@ function shareToSocial(platform) {
     shareSheet.classList.remove('active');
 }
 
+// Where this piece can be seen or bought: the museum page, a print, or —
+// for gallery-listed work — the gallery's own sale page
 function openPurchaseLink() {
     const sel = activePicture();
     const art = (sel && sel.userData.art) || selectedArt;
-
     if (!art) {
         showStatus('Please select an artwork first');
         return;
     }
-
-    if (art.purchaseUrl && art.purchaseUrl !== '#') {
-        window.open(art.purchaseUrl, '_blank');
-    } else {
-        showStatus('Purchase link coming soon! This would link to art marketplace.');
+    const options = [];
+    if (art.buyUrl) options.push({ icon: '🛒', label: art.price ? `Buy · ${art.price}` : 'Buy', sub: art.gallery || '', url: art.buyUrl });
+    if (art.galleryUrl && art.galleryUrl !== art.buyUrl) options.push({ icon: '🏛', label: art.gallery || 'Gallery', sub: 'Visit the gallery', url: art.galleryUrl });
+    if (art.museumUrl) options.push({ icon: '🖼', label: `View at ${art.source || 'the museum'}`, sub: 'Collection page', url: art.museumUrl });
+    if (art.printUrl && !art.buyUrl) options.push({ icon: '🖨', label: 'Buy a print', sub: 'Shop for prints of this work', url: art.printUrl });
+    if (!options.length) {
+        showStatus(art.price ? 'This piece is not listed for sale online yet' : 'No links available for this piece');
+        return;
     }
+    const sheet = document.getElementById('links-sheet');
+    const esc = (t) => String(t || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    sheet.querySelector('h3').textContent = art.title;
+    sheet.querySelector('p').textContent = [art.artist, art.date].filter(Boolean).join(' · ');
+    const list = sheet.querySelector('.share-options');
+    list.innerHTML = options.map((o) =>
+        `<a class="share-option" href="${esc(o.url)}" target="_blank" rel="noopener">
+            <div class="share-option-icon">${o.icon}</div>
+            <div class="share-option-label">${esc(o.label)}</div>
+            ${o.sub ? `<div class="share-option-sub">${esc(o.sub)}</div>` : ''}
+        </a>`).join('');
+    sheet.classList.add('active');
 }
 
 function openModal(modalId) {

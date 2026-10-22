@@ -269,6 +269,31 @@
             white-space: nowrap;
         }
 
+        .art-item-artist {
+            display: block;
+            font-size: 10px;
+            color: rgba(255, 255, 255, 0.55);
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .art-item.art-more {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(212, 175, 55, 0.12);
+            border: 1px dashed rgba(212, 175, 55, 0.5);
+        }
+        .art-more-label {
+            color: #f0dc9c;
+            font-family: 'Playfair Display', Georgia, serif;
+            font-size: 16px;
+            text-align: center;
+            line-height: 1.3;
+        }
+        .art-more-label small { font-family: inherit; font-size: 11px; color: rgba(255, 248, 230, 0.6); }
+        a.share-option { text-decoration: none; color: inherit; }
+        .share-option-sub { font-size: 10px; color: rgba(255, 255, 255, 0.5); margin-top: 2px; }
+
         .favorite-btn {
             position: absolute;
             top: 8px;
@@ -1130,7 +1155,7 @@
         }
 
         /* Share Sheet */
-        #share-sheet {
+        #share-sheet, #links-sheet {
             position: fixed;
             bottom: 0;
             left: 0;
@@ -1144,7 +1169,7 @@
             z-index: 2000;
         }
 
-        #share-sheet.active {
+        #share-sheet.active, #links-sheet.active {
             transform: translateY(0);
         }
 
@@ -1262,7 +1287,7 @@
             border: 1px solid rgba(212, 175, 55, 0.15);
         }
 
-        #share-sheet { border-top: 1px solid rgba(212, 175, 55, 0.3); }
+        #share-sheet, #links-sheet { border-top: 1px solid rgba(212, 175, 55, 0.3); }
 
         /* — HUD v2: minimal AR interface, browser-chrome & safe-area aware — */
         #canvas-container {
@@ -1424,7 +1449,7 @@
         #hint.fade, #hint.yield { opacity: 0; }
 
         /* Sheets and modals respect the viewport */
-        #share-sheet {
+        #share-sheet, #links-sheet {
             padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
             max-height: 80dvh;
             overflow-y: auto;
@@ -1789,7 +1814,7 @@
                     <div class="filter-chip active" data-source="museum">Museum</div>
                     <div class="filter-chip" data-source="modern">Modern</div>
                     <div class="filter-chip" data-source="photography">Photography</div>
-                    <div class="filter-chip" data-source="nft">NFTs</div>
+                    <div class="filter-chip" data-source="forsale">For sale</div>
                 </div>
 
                 <button id="search-btn">Search Art</button>
@@ -1886,6 +1911,13 @@
     </div>
 
     <!-- Share Sheet -->
+    <!-- Where to see or buy the selected piece -->
+    <div id="links-sheet">
+        <h3 style="color: white; margin-bottom: 4px;"></h3>
+        <p style="color: rgba(255,255,255,0.7); font-size: 13px; margin-bottom: 12px;"></p>
+        <div class="share-options"></div>
+    </div>
+
     <div id="share-sheet">
         <h3 style="color: white; margin-bottom: 8px;">Options</h3>
         <p style="color: rgba(255,255,255,0.7); font-size: 14px;">Measure, purchase and share this placement</p>
@@ -1937,6 +1969,7 @@
         </div>
     </div>
 
+    <script src="catalog.js"></script>
     <script src="frame-art.js"></script>
     <script src="arkit-quicklook.js"></script>
     <script src="coach-marks.js"></script>

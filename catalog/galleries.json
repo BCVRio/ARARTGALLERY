@@ -1,0 +1,5 @@
+{
+  "format": "ar-art-gallery-feed/1",
+  "notes": "Pieces listed here appear under the 'For sale' filter with a Buy button. See catalog/README.md for the fields. Images must be served with CORS enabled (Access-Control-Allow-Origin) or they cannot be hung in AR.",
+  "galleries": []
+}
