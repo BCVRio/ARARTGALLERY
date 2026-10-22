@@ -443,7 +443,43 @@ document.getElementById('more-btn').addEventListener('click', () => {
 
 document.getElementById('tips-btn').addEventListener('click', () => {
     shareSheet.classList.remove('active');
-    startCoachTour(true);
+    if (trackingMode === 'world') {
+        showIntro(true, () => startCoachTour(true));
+    } else {
+        startCoachTour(true);
+    }
+});
+
+// ------------------------------------------------------- walkthrough
+// The scan -> set wall -> hang flow is new, so everyone (returning users
+// included) sees the three-step card once; the version suffix lets a
+// future flow change show it again.
+const INTRO_KEY = 'arIntroV2';
+let introDone = null;
+
+function showIntro(force, done) {
+    const el = document.getElementById('intro');
+    if (!el) return;
+    let seen = false;
+    try { seen = localStorage.getItem(INTRO_KEY) === '1'; } catch (e) {}
+    if (seen && !force) return;
+    introDone = done || null;
+    el.classList.remove('hidden');
+}
+
+function closeIntro() {
+    const el = document.getElementById('intro');
+    if (!el || el.classList.contains('hidden')) return;
+    el.classList.add('hidden');
+    try { localStorage.setItem(INTRO_KEY, '1'); } catch (e) {}
+    const next = introDone;
+    introDone = null;
+    if (next) next();
+}
+
+document.getElementById('intro-go').addEventListener('click', () => {
+    sfx.select();
+    closeIntro();
 });
 
 document.getElementById('rescan-btn').addEventListener('click', () => {
@@ -923,6 +959,7 @@ function chooseTracking() {
 
     setPlacing(true);
     setHint('Point at the floor near your wall and pan slowly');
+    setTimeout(() => showIntro(false), 500);
 
     const skipBtn = document.getElementById('skip-scan');
     skipBtn.addEventListener('click', () => {
@@ -958,6 +995,7 @@ function startInstantMode(message) {
         try { wall.ui.hide(); } catch (e) {}
     }
     frameCallbacks.delete(worldFrame);
+    closeIntro();
     if (wall.group) wall.group.visible = false;
     if (galleryGroup.parent) galleryGroup.parent.remove(galleryGroup);
     trackingMode = 'instant';
@@ -1469,6 +1507,12 @@ function startCoachTour(force) {
     let tries = 0;
     clearInterval(startCoachTour._p);
     const tick = () => {
+        // While the user is still scanning or setting the wall the dock is
+        // meant to be hidden, so wait it out rather than timing out into a
+        // half-empty tour; the walkthrough card must be closed too
+        const settingUp = trackingMode === 'world' && wall.phase !== 'hang';
+        const introOpen = !document.getElementById('intro').classList.contains('hidden');
+        if (settingUp || introOpen) return false;
         if (!ready() && ++tries < 60) return false;
         clearInterval(startCoachTour._p);
         runCoachTour(force);
