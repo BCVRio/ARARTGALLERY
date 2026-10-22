@@ -1,12 +1,12 @@
 /*
  * Art catalogue: thousands of public-domain paintings shipped with the app
- * as catalog/paintings.json (built by tools/build-catalog-wiki.py from
- * Wikipedia and Wikidata), searched instantly on the device, plus an
- * optional gallery feed (catalog/galleries.json) of pieces for sale.
+ * as catalog/paintings.json (built by tools/build-catalog-museums.py from
+ * museums' open data), searched instantly on the device, plus an optional
+ * gallery feed (catalog/galleries.json) of pieces for sale.
  *
- * Images come from Wikimedia Commons: the catalogue stores only the file
- * name and the URLs are derived here, because Commons is the one image host
- * that reliably allows cross-origin use (which AR textures require).
+ * Images are hotlinked from the museums' own image servers (and Wikimedia
+ * Commons), chosen because they allow cross-origin use, which AR textures
+ * require; the catalogue stores only ids and the URLs are built here.
  *
  * Every piece becomes the app's artwork shape:
  *   { id, title, artist, date, year, medium, imageUrl, thumbnailUrl,
@@ -74,9 +74,15 @@
         return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
     }
 
+    // Museum entries name their source (e.s) and image id (e.u); the file
+    // header carries each source's URL templates. Commons entries carry the
+    // file name (e.f) instead and their URLs are derived from its MD5.
+    const fill = (tpl, e) => tpl.replace('{u}', encodeURIComponent(e.u)).replace('{i}', encodeURIComponent(e.i));
+
     function toArt(e, cat) {
+        const src = e.s && cat.sources && cat.sources[e.s];
         const art = {
-            id: (e.f ? 'wd-' : 'met-') + e.i,
+            id: (src ? e.s : 'wd') + '-' + e.i,
             title: e.t,
             artist: e.a,
             artistBio: e.b || '',
@@ -84,37 +90,35 @@
             date: e.d || '',
             year: e.y || null,
             medium: e.m || '',
-            kind: e.k,
+            kind: e.k || 'painting',
             tags: e.g || [],
             highlight: !!e.hl
         };
-        if (e.f) {
+        if (src) {
+            art.imageUrl = fill(src.image, e);
+            art.thumbnailUrl = fill(src.thumb, e);
+            art.imageFallbacks = (src.fallbacks || []).map((t) => fill(t, e));
+            art.source = src.name;
+            art.museumUrl = fill(src.page, e);
+        } else {
             const u = commonsUrls(cat.imgBase, e.f);
             art.imageUrl = u.image;
             art.thumbnailUrl = u.thumbnail;
             art.imageFallbacks = u.fallbacks;
             art.source = e.c || 'Wikimedia Commons';
             art.museumUrl = cat.filePage.replace('{file}', encodeURIComponent(e.f));
-            if (e.p) art.wikiUrl = cat.wikiUrl.replace('{title}', encodeURIComponent(e.p.replace(/ /g, '_')));
-        } else {
-            art.imageUrl = cat.imgPrefix + e.img;
-            art.thumbnailUrl = cat.imgPrefix + e.img;
-            art.imageFallbacks = [];
-            art.source = 'The Met';
-            art.museumUrl = cat.pageUrl.replace('{id}', e.i);
+            art.commonsPage = true;
         }
+        if (e.p && cat.wikiUrl) art.wikiUrl = cat.wikiUrl.replace('{title}', encodeURIComponent(e.p.replace(/ /g, '_')));
         if (e.w && e.h) { art.widthCm = e.w; art.heightCm = e.h; }
         art.printUrl = printUrl(art);
         return art;
     }
 
     // Browse order: how widely a work is written about (Wikipedia sitelinks)
-    // ranks famous pieces first; the Met format ranks by department instead
-    const DEPT_RANK = { ep: 0, rl: 1, ad: 2, ap: 2, ma: 3, md: 4, cl: 4, is: 5, as: 6, ph: 7 };
+    // ranks famous pieces first
     function rankOf(e) {
-        if (e.f) return -Math.min(60, e.l || 0) / 10;
-        const code = (e.img || '').slice(0, 2);
-        return code in DEPT_RANK ? DEPT_RANK[code] : 8;
+        return -Math.min(60, e.l || 0) / 10;
     }
 
     function buildIndex(cat) {
@@ -153,7 +157,7 @@
         const limit = opts.limit || 400;
         const scored = [];
         for (const e of cat.items) {
-            if (opts.kind && e.k !== opts.kind) continue;
+            if (opts.kind && (e.k || 'painting') !== opts.kind) continue;
             if (tag && !(e.g || []).some((t) => t.toLowerCase() === tag)) continue;
             let score = e.hl ? 2 : 0;
             let ok = true;

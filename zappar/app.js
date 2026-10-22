@@ -1925,7 +1925,7 @@ function openPurchaseLink() {
     if (art.galleryUrl && art.galleryUrl !== art.buyUrl) options.push({ icon: '🏛', label: art.gallery || 'Gallery', sub: 'Visit the gallery', url: art.galleryUrl });
     if (art.wikiUrl) options.push({ icon: '📖', label: 'Read about it', sub: 'Wikipedia', url: art.wikiUrl });
     if (art.museumUrl) {
-        const atMuseum = art.source && !/commons|wikimedia/i.test(art.source) && !art.wikiUrl && !art.imageFallbacks;
+        const atMuseum = art.source && !art.commonsPage && !/commons|wikimedia/i.test(art.source);
         options.push({ icon: '🖼', label: atMuseum ? `View at ${art.source}` : 'View on Wikimedia Commons',
             sub: atMuseum ? 'Collection page' : (art.culture ? `Collection of ${art.culture}` : 'Image page'), url: art.museumUrl });
     }

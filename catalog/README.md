@@ -2,23 +2,41 @@
 
 ## `paintings.json` — the museum catalogue
 
-Thousands of notable public-domain paintings from Wikipedia's painting
-articles and their Wikidata records, built by `tools/build-catalog-wiki.py`
-(`tools/build-catalog-commons.py` builds the same file from the Wikidata query
-service when it is not throttled). Each entry has the title, artist, year,
-the collection that holds it, genre/movement tags, real dimensions where
-recorded (used to hang the piece at true size), the Wikipedia article, and
-the Wikimedia Commons image file. Image URLs are derived on the device from
-the file name; Commons is used because it is the one image host that
-reliably allows cross-origin use, which AR textures require (The Met's and
-Cleveland's image servers do not, so `tools/build-catalog.py` for the Met is
-kept only for reference).
+About 13,600 public-domain paintings from museums that publish their
+collections as open data *and* serve their images with the cross-origin
+header that AR textures require (many museum image servers, The Met's and
+Cleveland's among them, do not, so their pictures cannot be used as WebGL
+textures and are left out):
 
-Rebuild or extend it with:
+| Source | Works | Images |
+| --- | --- | --- |
+| National Gallery of Art, Washington | ~2,900 | api.nga.gov (IIIF) |
+| SMK – National Gallery of Denmark | ~4,600 | iip.smk.dk / api.smk.dk |
+| Smithsonian American Art Museum | ~4,100 | ids.si.edu |
+| National Portrait Gallery (Smithsonian) | ~600 | ids.si.edu |
+| National Museum of Asian Art (Smithsonian) | ~1,400 | ids.si.edu |
 
-    python3 -I tools/build-catalog-wiki.py --out catalog/paintings.json
+Each entry has the title, artist, date, medium, real dimensions where
+recorded (used to hang the piece at true size), subject tags and the
+museum's own collection page. Only ids are stored; the image URLs are built
+on the device from the per-source templates in the file header
+(`sources`). Works are flagged as highlights (`hl`) when the artist is
+well known, and the file is ordered so the opening strip shows a spread of
+painters.
 
-then copy the file into `zappar/catalog/` as well.
+Rebuild it with:
+
+    python3 -I tools/build-catalog-museums.py --cache /path/to/cache --out catalog/paintings.json
+
+The cache directory keeps the raw museum downloads (NGA CSVs, SMK API
+pages, Smithsonian bulk metadata — a few hundred MB) so later runs are
+quick. Then copy the file into `zappar/catalog/` as well.
+
+`tools/build-catalog-commons.py` builds a catalogue of famous paintings
+from Wikidata with Wikimedia Commons images in the same format; pass its
+output to the museum builder with `--merge` to add those works. The
+Wikidata query service rate-limits heavily, so that build can take hours.
+`tools/build-catalog.py` (The Met) is kept only for reference.
 
 ## `galleries.json` — pieces for sale
 
