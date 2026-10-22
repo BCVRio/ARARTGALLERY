@@ -1219,12 +1219,12 @@ function dragPicture(mesh, dx, dy) {
 
 function setSelectedPicture(mesh) {
     if (selectedPlaced && selectedPlaced.userData.frame) {
-        selectedPlaced.userData.frameBase = 0x8c6a1f;
+        selectedPlaced.userData.selected = false;
         applyRoomLight(selectedPlaced);
     }
     selectedPlaced = mesh;
     if (mesh && mesh.userData.frame) {
-        mesh.userData.frameBase = 0xf5d87a;
+        mesh.userData.selected = true;
         applyRoomLight(mesh);
     }
     if (measurementMode) updateMeasurement();
@@ -1234,11 +1234,7 @@ function removePicture(mesh) {
     if (mesh.parent) mesh.parent.remove(mesh);
     if (mesh.userData.frame) {
         mesh.userData.frame.geometry.dispose();
-        mesh.userData.frame.material.dispose();
-    }
-    if (mesh.userData.shadow) {
-        mesh.userData.shadow.geometry.dispose();
-        mesh.userData.shadow.material.dispose();
+        [].concat(mesh.userData.frame.material).forEach((m) => m.dispose());
     }
     mesh.geometry.dispose();
     if (mesh.material.map) mesh.material.map.dispose();
@@ -1273,49 +1269,56 @@ function clearGallery() {
     placedArts.slice().forEach(removePicture);
 }
 
+// Tries the sharper 2000px copy first, falling back to the strip's image
 function loadArtTexture(art, onLoad) {
     const loader = new THREE.TextureLoader();
     loader.crossOrigin = 'anonymous';
-    loader.load(
-        art.imageUrl,
-        onLoad,
-        undefined,
-        (error) => {
-            console.error('Error loading texture:', error);
-            showStatus('Error loading artwork image');
-        }
-    );
+    const hi = window.FrameArt ? FrameArt.hiResUrl(art.imageUrl) : art.imageUrl;
+    const fail = (error) => {
+        console.error('Error loading texture:', error);
+        showStatus('Error loading artwork image');
+    };
+    loader.load(hi, onLoad, undefined, () => {
+        if (hi === art.imageUrl) return fail('image unavailable');
+        loader.load(art.imageUrl, onLoad, undefined, fail);
+    });
 }
 
-function makeArtMesh(texture, width, art) {
-    if ('colorSpace' in texture && THREE.SRGBColorSpace) {
-        texture.colorSpace = THREE.SRGBColorSpace;
-    }
-    const aspect = texture.image.width / texture.image.height;
-    const height = width / aspect;
-    const geometry = new THREE.PlaneGeometry(width, height);
-    const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
-    const mesh = new THREE.Mesh(geometry, material);
+// The frame's physical thickness: the painted face sits on a box this deep,
+// so the moulding's outer edge shows when the piece is seen from an angle
+const FRAME_DEPTH = 0.03;
+// Outer edge shades per box face: +X, -X, +Y, -Y, +Z (hidden), -Z (wall side)
+const FRAME_EDGES = [0x5c451a, 0x7d6127, 0x8f702e, 0x4a3814, 0x6b5120, 0x3a2b0f];
 
-    // Slim gold frame behind the canvas; brightens when the picture is selected
-    const frame = new THREE.Mesh(
-        new THREE.PlaneGeometry(width * 1.06, height * 1.06),
-        new THREE.MeshBasicMaterial({ color: 0x8c6a1f, side: THREE.DoubleSide })
+function makeArtMesh(texture, width, art) {
+    const img = texture.image;
+    const height = width * (img.height / img.width);
+    const maxTex = (renderer && renderer.capabilities.maxTextureSize) || 2048;
+    const painted = FrameArt.paint(img, width, height, { maxPx: Math.min(2048, maxTex) });
+    texture.dispose();
+
+    const map = new THREE.CanvasTexture(painted.canvas);
+    map.colorSpace = THREE.SRGBColorSpace;
+    if (renderer) map.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(painted.totalW, painted.totalH),
+        new THREE.MeshBasicMaterial({ map })
     );
-    frame.position.z = -0.004;
+
+    const frame = new THREE.Mesh(
+        new THREE.BoxGeometry(painted.totalW, painted.totalH, FRAME_DEPTH),
+        FRAME_EDGES.map((c) => new THREE.MeshBasicMaterial({
+            color: c, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1
+        }))
+    );
+    frame.position.z = -FRAME_DEPTH / 2 - 0.001;
     mesh.add(frame);
 
-    // Soft contact shadow on the wall, slightly below the frame, so the
-    // piece reads as hanging rather than pasted on
-    const shadow = new THREE.Mesh(
-        new THREE.PlaneGeometry(width * 1.06 * 1.52, height * 1.06 * 1.52),
-        new THREE.MeshBasicMaterial({ map: shadowTexture(), color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false })
-    );
-    shadow.position.set(width * 0.01, -height * 0.03, -0.008);
-    shadow.renderOrder = -1;
-    mesh.add(shadow);
-
-    mesh.userData = { originalWidth: width, originalHeight: height, art, scale: 1, frame, shadow, frameBase: 0x8c6a1f };
+    mesh.userData = {
+        originalWidth: width, originalHeight: height,
+        totalWidth: painted.totalW, totalHeight: painted.totalH,
+        art, scale: 1, frame, selected: false
+    };
     applyRoomLight(mesh);
     return mesh;
 }
@@ -1327,7 +1330,6 @@ function makeArtMesh(texture, width, art) {
 const roomLight = {
     color: new THREE.Color(1, 1, 1),
     level: 1,
-    shadow: 0.35,
     target: null, scene: null, cam: null, buf: null, last: 0, logged: 0
 };
 
@@ -1373,7 +1375,6 @@ function sampleRoomLight() {
     const level = Math.min(1, Math.max(0.55, 0.55 + 0.5 * Math.sqrt(lum / 0.2)));
     roomLight.color.lerp(tint, 0.25);
     roomLight.level += (level - roomLight.level) * 0.25;
-    roomLight.shadow += (Math.min(0.5, Math.max(0.2, 0.2 + 1.2 * lum)) - roomLight.shadow) * 0.25;
     placedArts.forEach(applyRoomLight);
     if (now - roomLight.logged > 5000) {
         roomLight.logged = now;
@@ -1389,24 +1390,13 @@ function applyRoomLight(mesh) {
     mesh.material.color.setRGB(clamp(c.r * k), clamp(c.g * k), clamp(c.b * k));
     const f = mesh.userData.frame;
     if (f) {
-        const base = new THREE.Color(mesh.userData.frameBase || 0x8c6a1f);
-        f.material.color.setRGB(clamp(base.r * c.r * k), clamp(base.g * c.g * k), clamp(base.b * c.b * k));
+        // A selected piece's frame edge catches a little more light
+        const lift = mesh.userData.selected ? 1.25 : 1;
+        f.material.forEach((m, i) => {
+            const base = new THREE.Color(FRAME_EDGES[i]);
+            m.color.setRGB(clamp(base.r * c.r * k * lift), clamp(base.g * c.g * k * lift), clamp(base.b * c.b * k * lift));
+        });
     }
-    if (mesh.userData.shadow) mesh.userData.shadow.material.opacity = roomLight.shadow;
-}
-
-let _shadowTex = null;
-function shadowTexture() {
-    if (_shadowTex) return _shadowTex;
-    const c = document.createElement('canvas');
-    c.width = c.height = 128;
-    const g = c.getContext('2d');
-    g.shadowColor = 'rgba(0,0,0,1)';
-    g.shadowBlur = 18;
-    g.fillStyle = 'rgba(0,0,0,1)';
-    g.fillRect(22, 22, 84, 84);
-    _shadowTex = new THREE.CanvasTexture(c);
-    return _shadowTex;
 }
 
 function placeArtwork() {
@@ -1428,7 +1418,8 @@ function placeArtwork() {
         }
         // On the wall surface at the aim point, upright (wall-local XY)
         const spot = wallAimLocal() || wallFrontLocal();
-        pose = { pos: new THREE.Vector3(spot.x, spot.y, 0.012), quat: new THREE.Quaternion() };
+        // The frame's back rests on the wall
+        pose = { pos: new THREE.Vector3(spot.x, spot.y, FRAME_DEPTH + 0.002), quat: new THREE.Quaternion() };
     } else if (trackingMode === 'instant') {
         instantTracker.setAnchorPoseFromCameraOffset(0, 0, -INSTANT_DEPTH);
         instantPlacement = false;
@@ -1446,7 +1437,7 @@ function placeArtwork() {
         mesh.quaternion.copy(pose.quat);
         // Never let a floor-based wall hang the piece into the floor
         if (trackingMode === 'world' && wall.fromFloor) {
-            mesh.position.y = Math.max(mesh.position.y, mesh.userData.originalHeight * 0.53 + 0.15);
+            mesh.position.y = Math.max(mesh.position.y, mesh.userData.totalHeight / 2 + 0.15);
         }
         galleryGroup.add(mesh);
         placedArts.push(mesh);

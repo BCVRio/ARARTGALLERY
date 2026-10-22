@@ -206,51 +206,11 @@ def Xform "Root"
     }
 
     // ---------------------------------------------------- framed composite
-    // Gold frame + warm mat + artwork, matching the in-app look, baked into
-    // a single texture so the whole piece stays one prim.
+    // Frame, mat and artwork painted by the shared FrameArt painter (the
+    // same look as the in-app view) at high resolution, baked into a single
+    // texture so the whole piece stays one prim.
     function compositeFramedArt(img, artW, artH) {
-        const frameM = Math.max(0.028, artW * 0.035);
-        const matM = Math.max(0.04, artW * 0.055);
-        const totalW = artW + 2 * (frameM + matM);
-        const totalH = artH + 2 * (frameM + matM);
-
-        const pxPerM = Math.min(1536 / Math.max(totalW, totalH), 2048 / Math.max(totalW, totalH));
-        const cw = Math.round(totalW * pxPerM);
-        const ch = Math.round(totalH * pxPerM);
-        const canvas = document.createElement('canvas');
-        canvas.width = cw;
-        canvas.height = ch;
-        const ctx = canvas.getContext('2d');
-
-        // Frame: brushed gold with a subtle bevel gradient
-        const g = ctx.createLinearGradient(0, 0, cw, ch);
-        g.addColorStop(0, '#a8842e');
-        g.addColorStop(0.5, '#8c6a1f');
-        g.addColorStop(1, '#6e5318');
-        ctx.fillStyle = g;
-        ctx.fillRect(0, 0, cw, ch);
-
-        const fPx = frameM * pxPerM;
-        const mPx = matM * pxPerM;
-
-        // Inner frame lip
-        ctx.strokeStyle = 'rgba(255, 235, 180, 0.55)';
-        ctx.lineWidth = Math.max(1, fPx * 0.08);
-        ctx.strokeRect(fPx * 0.92, fPx * 0.92, cw - fPx * 1.84, ch - fPx * 1.84);
-
-        // Mat
-        ctx.fillStyle = '#f4efe5';
-        ctx.fillRect(fPx, fPx, cw - 2 * fPx, ch - 2 * fPx);
-        // Mat bevel shadow around the art opening
-        ctx.strokeStyle = 'rgba(60, 45, 20, 0.28)';
-        ctx.lineWidth = Math.max(1, mPx * 0.06);
-        ctx.strokeRect(fPx + mPx - ctx.lineWidth, fPx + mPx - ctx.lineWidth,
-            cw - 2 * (fPx + mPx) + 2 * ctx.lineWidth, ch - 2 * (fPx + mPx) + 2 * ctx.lineWidth);
-
-        // Artwork
-        ctx.drawImage(img, fPx + mPx, fPx + mPx, cw - 2 * (fPx + mPx), ch - 2 * (fPx + mPx));
-
-        return { canvas, totalW, totalH };
+        return global.FrameArt.paint(img, artW, artH, { maxPx: 3072 });
     }
 
     function canvasToPngBytes(canvas) {
@@ -304,7 +264,8 @@ def Xform "Root"
      */
     async function view(art, artWidthM, opts) {
         opts = opts || {};
-        const img = await loadImage(art.imageUrl);
+        const hi = global.FrameArt ? global.FrameArt.hiResUrl(art.imageUrl) : art.imageUrl;
+        const img = await loadImage(hi).catch(() => loadImage(art.imageUrl));
         const artW = artWidthM || 0.8;
         const artH = artW * (img.naturalHeight / img.naturalWidth);
 
