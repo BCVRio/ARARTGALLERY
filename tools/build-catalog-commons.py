@@ -92,6 +92,26 @@ def clean(s):
     return re.sub(r"\s+", " ", (s or "")).strip()
 
 
+def write_out(items, path):
+    items.sort(key=lambda e: (-e["l"], e["a"].lower(), e["t"].lower()))
+    out = {
+        "source": "Wikidata + Wikimedia Commons (public domain)",
+        "built": time.strftime("%Y-%m-%d"),
+        "imgBase": "https://upload.wikimedia.org/wikipedia/commons/",
+        "filePage": "https://commons.wikimedia.org/wiki/File:{file}",
+        "itemUrl": "https://www.wikidata.org/wiki/{id}",
+        "wikiUrl": "https://en.wikipedia.org/wiki/{title}",
+        "count": len(items),
+        "items": items,
+    }
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
+    import os
+    os.replace(tmp, path)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="catalog/paintings.json")
@@ -148,23 +168,12 @@ def main():
             items.append(e)
             added += 1
         print("  +%d (total %d), %.0fs" % (added, len(items), time.time() - t0), flush=True)
+        write_out(items, args.out)   # partial results survive a throttled or killed run
         if len(rows) < PAGE:
             break
         time.sleep(65)   # the query service asks for roughly one query a minute from us
 
-    items.sort(key=lambda e: (-e["l"], e["a"].lower(), e["t"].lower()))
-    out = {
-        "source": "Wikidata + Wikimedia Commons (public domain)",
-        "built": time.strftime("%Y-%m-%d"),
-        "imgBase": "https://upload.wikimedia.org/wikipedia/commons/",
-        "filePage": "https://commons.wikimedia.org/wiki/File:{file}",
-        "itemUrl": "https://www.wikidata.org/wiki/{id}",
-        "wikiUrl": "https://en.wikipedia.org/wiki/{title}",
-        "count": len(items),
-        "items": items,
-    }
-    with open(args.out, "w", encoding="utf-8") as f:
-        json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
+    out = write_out(items, args.out)
     with_dims = sum(1 for e in items if e.get("w"))
     print("done: %d paintings (%d with dimensions, %d highlights), %.1f MB, %.0fs" % (
         len(items), with_dims, sum(1 for e in items if e.get("hl")),
