@@ -1,17 +1,22 @@
 # Art catalogue
 
-## `met.json` — the museum catalogue
+## `paintings.json` — the museum catalogue
 
-Thousands of public-domain paintings and early photographs from The
-Metropolitan Museum of Art's Open Access collection (CC0), built by
-`tools/build-catalog.py`. Each entry has the title, artist, date, medium,
-real dimensions in centimetres (used to hang the piece at true size), subject
-tags, a link to the museum's page for the work, and a museum-hosted image
-that allows cross-origin use (required for AR textures).
+Thousands of notable public-domain paintings from Wikipedia's painting
+articles and their Wikidata records, built by `tools/build-catalog-wiki.py`
+(`tools/build-catalog-commons.py` builds the same file from the Wikidata query
+service when it is not throttled). Each entry has the title, artist, year,
+the collection that holds it, genre/movement tags, real dimensions where
+recorded (used to hang the piece at true size), the Wikipedia article, and
+the Wikimedia Commons image file. Image URLs are derived on the device from
+the file name; Commons is used because it is the one image host that
+reliably allows cross-origin use, which AR textures require (The Met's and
+Cleveland's image servers do not, so `tools/build-catalog.py` for the Met is
+kept only for reference).
 
 Rebuild or extend it with:
 
-    python3 -I tools/build-catalog.py --out catalog/met.json
+    python3 -I tools/build-catalog-wiki.py --out catalog/paintings.json
 
 then copy the file into `zappar/catalog/` as well.
 

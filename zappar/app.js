@@ -1273,19 +1273,39 @@ function clearGallery() {
     placedArts.slice().forEach(removePicture);
 }
 
-// Tries the sharper 2000px copy first, falling back to the strip's image
+// Tries the sharper 2000px copy first, then the catalogue image, then its
+// fallbacks (a smaller thumbnail, the original file) — a piece is only
+// reported unavailable when every source has failed
+function imageCandidates(art) {
+    const hi = window.FrameArt ? FrameArt.hiResUrl(art.imageUrl) : art.imageUrl;
+    return [...new Set([hi, art.imageUrl].concat(art.imageFallbacks || []).filter(Boolean))];
+}
+
 function loadArtTexture(art, onLoad) {
     const loader = new THREE.TextureLoader();
     loader.crossOrigin = 'anonymous';
-    const hi = window.FrameArt ? FrameArt.hiResUrl(art.imageUrl) : art.imageUrl;
-    const fail = (error) => {
-        console.error('Error loading texture:', error);
-        showStatus('Error loading artwork image');
+    const candidates = imageCandidates(art);
+    const tryNext = (i) => {
+        if (i >= candidates.length) {
+            console.error('no image source worked for', art.title, candidates);
+            showStatus('Could not load this artwork\'s image');
+            return;
+        }
+        loader.load(candidates[i], onLoad, undefined, () => tryNext(i + 1));
     };
-    loader.load(hi, onLoad, undefined, () => {
-        if (hi === art.imageUrl) return fail('image unavailable');
-        loader.load(art.imageUrl, onLoad, undefined, fail);
-    });
+    tryNext(0);
+}
+
+// Strip thumbnails step through the same fallbacks before giving up
+function artImageError(img) {
+    const alts = JSON.parse(img.dataset.alts || '[]');
+    if (alts.length) {
+        img.dataset.alts = JSON.stringify(alts.slice(1));
+        img.src = alts[0];
+    } else {
+        img.onerror = null;
+        img.src = 'assets/brand/art-placeholder.jpg';
+    }
 }
 
 // The frame's physical thickness: the painted face sits on a box this deep,
@@ -1683,9 +1703,12 @@ async function searchArt(query = null) {
             } catch (e) {
                 console.log('catalogue unavailable:', e && e.message);
             }
-            if (searchQuery && items.length < 12) {
+            // Top up from the live search when a query finds little — and
+            // always when the catalogue itself is unavailable, so the strip
+            // never opens empty
+            if ((searchQuery && items.length < 12) || items.length === 0) {
                 try {
-                    const live = (await searchCommons(searchQuery)).filter(l => !items.some(i => i.id === l.id));
+                    const live = (await searchCommons(searchQuery || 'impressionism')).filter(l => !items.some(i => i.id === l.id));
                     items = items.concat(live);
                     total += live.length;
                 } catch (e) {
@@ -1760,7 +1783,7 @@ function displayArtGallery() {
                 ${isFavorite ? '❤️' : '🤍'}
             </div>
             ${art.price ? `<div class="buy-badge">${esc(priceLabel(art))}</div>` : ''}
-            <img crossorigin="anonymous" loading="lazy" src="${esc(art.thumbnailUrl)}" alt="${esc(art.title)}" onerror="this.src='assets/brand/art-placeholder.jpg'">
+            <img crossorigin="anonymous" loading="lazy" src="${esc(art.thumbnailUrl)}" alt="${esc(art.title)}" data-alts="${esc(JSON.stringify(art.imageFallbacks || []))}" onerror="artImageError(this)">
             <div class="art-item-title" title="${esc(art.title)} — ${esc(art.artist)}">${esc(art.title)}<span class="art-item-artist">${esc(art.artist)}</span></div>
         `;
 
@@ -1900,7 +1923,12 @@ function openPurchaseLink() {
     const options = [];
     if (art.buyUrl) options.push({ icon: '🛒', label: art.price ? `Buy · ${art.price}` : 'Buy', sub: art.gallery || '', url: art.buyUrl });
     if (art.galleryUrl && art.galleryUrl !== art.buyUrl) options.push({ icon: '🏛', label: art.gallery || 'Gallery', sub: 'Visit the gallery', url: art.galleryUrl });
-    if (art.museumUrl) options.push({ icon: '🖼', label: `View at ${art.source || 'the museum'}`, sub: 'Collection page', url: art.museumUrl });
+    if (art.wikiUrl) options.push({ icon: '📖', label: 'Read about it', sub: 'Wikipedia', url: art.wikiUrl });
+    if (art.museumUrl) {
+        const atMuseum = art.source && !/commons|wikimedia/i.test(art.source) && !art.wikiUrl && !art.imageFallbacks;
+        options.push({ icon: '🖼', label: atMuseum ? `View at ${art.source}` : 'View on Wikimedia Commons',
+            sub: atMuseum ? 'Collection page' : (art.culture ? `Collection of ${art.culture}` : 'Image page'), url: art.museumUrl });
+    }
     if (art.printUrl && !art.buyUrl) options.push({ icon: '🖨', label: 'Buy a print', sub: 'Shop for prints of this work', url: art.printUrl });
     if (!options.length) {
         showStatus(art.price ? 'This piece is not listed for sale online yet' : 'No links available for this piece');

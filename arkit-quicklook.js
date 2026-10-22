@@ -265,7 +265,12 @@ def Xform "Root"
     async function view(art, artWidthM, opts) {
         opts = opts || {};
         const hi = global.FrameArt ? global.FrameArt.hiResUrl(art.imageUrl) : art.imageUrl;
-        const img = await loadImage(hi).catch(() => loadImage(art.imageUrl));
+        const candidates = [...new Set([hi, art.imageUrl].concat(art.imageFallbacks || []).filter(Boolean))];
+        let img = null;
+        for (const url of candidates) {
+            try { img = await loadImage(url); break; } catch (e) { /* try the next source */ }
+        }
+        if (!img) throw new Error('No image source available');
         const artW = artWidthM || 0.8;
         const artH = artW * (img.naturalHeight / img.naturalWidth);
 
