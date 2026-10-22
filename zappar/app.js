@@ -1545,7 +1545,9 @@ async function openInARKit(art) {
     showStatus('Opening on your wall…');
     qlOpenedAt = Date.now();
     try {
-        await ARKitQuickLook.view(art, widthM);
+        await ARKitQuickLook.view(art, widthM, {
+            onAction: () => { qlOpenedAt = Date.now() - 5000; onQuickLookReturn(); }
+        });
         setHint('Point at your wall to place it — the shutter saves a photo');
     } catch (err) {
         qlOpenedAt = 0;
@@ -1557,7 +1559,7 @@ async function openInARKit(art) {
 // Quick Look fully covers the page; when it closes we land back here and
 // invite the next piece — the photo was taken with Apple's own shutter
 function onQuickLookReturn() {
-    if (!qlOpenedAt || document.hidden) return;
+    if (!qlOpenedAt) return;
     if (Date.now() - qlOpenedAt < 3000) return; // ignore the opening transition
     qlOpenedAt = 0;
     setHint('Beautiful. Try another painting — or a different wall', 7000);
@@ -1566,8 +1568,9 @@ function onQuickLookReturn() {
     document.getElementById('gallery-toggle').classList.add('active');
 }
 if (arkitMode) {
-    document.addEventListener('visibilitychange', onQuickLookReturn);
-    window.addEventListener('focus', onQuickLookReturn);
+    const backFromQuickLook = () => { if (!document.hidden) onQuickLookReturn(); };
+    document.addEventListener('visibilitychange', backFromQuickLook);
+    window.addEventListener('focus', backFromQuickLook);
 }
 
 function buildTemplate(template) {

@@ -9,7 +9,8 @@
  * into a single texture on a single thin-box mesh (Quick Look offsets
  * multi-prim scenes away from vertical planes, so one prim it is), and the
  * scene carries preliminary:planeAnchoring:alignment = "vertical" so Quick
- * Look anchors it to walls only.
+ * Look anchors it to walls only. Quick Look's banner shows the title and
+ * artist, with one button back to the gallery.
  *
  * No dependencies: the USDA text, the PNG texture and the stored
  * 64-byte-aligned zip container are produced right here.
@@ -93,14 +94,22 @@
 
     // ----------------------------------------------------------- usda text
     // One thin box, front face carrying the composited texture, every other
-    // face pinned to a frame-coloured pixel. Y-up and upright: Quick Look
-    // rests the bounding box's -Z side against the detected wall.
+    // face pinned to a frame-coloured pixel.
+    //
+    // Quick Look treats a wall anchor like a floor anchor: the model's +Y
+    // axis points out of the surface, and -Z points up the wall. A picture
+    // modelled upright (facing +Z, top at +Y) therefore lands face-down,
+    // sticking out of the wall. So the box is built upright and then turned
+    // -90 deg about X: its face ends up along +Y (out of the wall) and its
+    // top along -Z (up the wall).
+    const toWall = (v) => [v[0], v[2], -v[1]];
+
     function buildUsda(w, h, d) {
         const x = w / 2, y = h / 2, z = d / 2;
         const P = [
             [-x, -y, z], [x, -y, z], [x, y, z], [-x, y, z],      // front
             [-x, -y, -z], [x, -y, -z], [x, y, -z], [-x, y, -z]   // back
-        ];
+        ].map(toWall);
         // faces: front, back, left, right, top, bottom (outward winding)
         const F = [
             [0, 1, 2, 3], [5, 4, 7, 6], [4, 0, 3, 7],
@@ -108,7 +117,7 @@
         ];
         const N = [
             [0, 0, 1], [0, 0, -1], [-1, 0, 0], [1, 0, 0], [0, 1, 0], [0, -1, 0]
-        ];
+        ].map(toWall);
         const EDGE = '(0.01, 0.5)'; // frame-border pixel of the texture
         const uv = [];
         F.forEach((face, fi) => {
@@ -273,11 +282,28 @@ def Xform "Root"
         }
     }
 
+    // Quick Look's own banner is the only UI a page may add inside the
+    // viewer: a title, a subtitle and one button. The button tap comes back
+    // to the page as a message event on the rel="ar" link.
+    function bannerFragment(art, actionLabel) {
+        const clean = (t) => String(t || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+        const params = [
+            ['checkoutTitle', clean(art.title) || 'Artwork'],
+            ['checkoutSubtitle', clean([art.artist, art.date].filter(Boolean).join(' · ')) || 'AR Art Gallery'],
+            ['callToAction', actionLabel || 'Choose another']
+        ];
+        return params.map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
+    }
+
+    let lastLink = null;
+
     /*
      * Build the USDZ for one artwork and hand it to AR Quick Look.
-     * art: { imageUrl, title } — artWidthM: real-world canvas width in meters.
+     * art: { imageUrl, title, artist?, date? } — artWidthM: real-world canvas
+     * width in meters — opts.onAction: called when the banner button is tapped.
      */
-    async function view(art, artWidthM) {
+    async function view(art, artWidthM, opts) {
+        opts = opts || {};
         const img = await loadImage(art.imageUrl);
         const artW = artWidthM || 0.8;
         const artH = artW * (img.naturalHeight / img.naturalWidth);
@@ -294,21 +320,29 @@ def Xform "Root"
         const blob = new Blob([usdz], { type: 'model/vnd.usdz+zip' });
         const url = URL.createObjectURL(blob);
 
+        // The link stays in the page while Quick Look is open, because the
+        // banner's tap is delivered to it; the previous one goes now
+        if (lastLink) {
+            if (lastLink.parentNode) lastLink.parentNode.removeChild(lastLink);
+            URL.revokeObjectURL(lastLink._blobUrl);
+        }
         const a = document.createElement('a');
         a.rel = 'ar';
-        a.href = url;
+        a.href = url + '#' + bannerFragment(art, opts.actionLabel);
+        a._blobUrl = url;
+        a.style.display = 'none';
+        a.addEventListener('message', (event) => {
+            if (event.data === '_apple_ar_quicklook_button_tapped' && opts.onAction) opts.onAction();
+        }, false);
         // Quick Look requires a child element inside the rel="ar" anchor
         a.appendChild(document.createElement('img'));
         document.body.appendChild(a);
+        lastLink = a;
         a.click();
-        setTimeout(() => {
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-        }, 15000);
         return usdz.length;
     }
 
-    const api = { supported, view, _buildZip: buildZip, _buildUsda: buildUsda, _crc32: crc32 };
+    const api = { supported, view, _buildZip: buildZip, _buildUsda: buildUsda, _crc32: crc32, _bannerFragment: bannerFragment };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     global.ARKitQuickLook = api;
 })(typeof window !== 'undefined' ? window : globalThis);
