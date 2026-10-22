@@ -7,7 +7,7 @@ year, collection, genre/movement tags, real dimensions where recorded, the
 Commons file name (image URLs are derived on the device) and the English
 Wikipedia article where one exists.
 
-Usage: python3 -I tools/build-catalog-commons.py [--pages 8] [--out catalog/paintings.json]
+Usage: python3 -I tools/build-catalog-commons.py [--min-links 4] [--out catalog/paintings.json]
 
 The Wikidata query service is rate limited; the script honours Retry-After
 and spaces queries out, so a full build can take a while.
@@ -17,7 +17,10 @@ import urllib.request, urllib.parse, urllib.error
 
 ENDPOINT = "https://query.wikidata.org/sparql"
 UA = {"User-Agent": "ARArtGallery-catalog-builder/1.0 (scott@bamsound.com)", "Accept": "application/sparql-results+json"}
-PAGE = 1000
+PAGE = 3000
+# Works are fetched in bands of Wikipedia-sitelink counts (a proxy for fame),
+# most famous first; banding avoids the deep OFFSET paging that times out
+BANDS = [(25, 10000), (15, 24), (11, 14), (8, 10), (6, 7), (5, 5), (4, 4)]
 MIN_SITELINKS = 4          # notable works first; raise for a smaller, more famous set
 MAX_YEAR = 1925            # keeps to works safely in the public domain
 
@@ -28,10 +31,10 @@ WHERE {
   {
     SELECT ?item (SAMPLE(?image) AS ?img) (MIN(YEAR(?inception)) AS ?year) ?sitelinks WHERE {
       ?item wdt:P31 wd:Q3305213; wdt:P18 ?image; wdt:P571 ?inception; wikibase:sitelinks ?sitelinks .
-      FILTER(?sitelinks >= %(min_links)d)
+      FILTER(?sitelinks >= %(lo)d && ?sitelinks <= %(hi)d)
       FILTER(YEAR(?inception) <= %(max_year)d)
     } GROUP BY ?item ?sitelinks
-    ORDER BY DESC(?sitelinks) LIMIT %(limit)d OFFSET %(offset)d
+    LIMIT %(limit)d
   }
   OPTIONAL { ?item wdt:P170 ?creator . }
   OPTIONAL { ?item wdt:P195 ?collection . }
@@ -115,19 +118,20 @@ def write_out(items, path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="catalog/paintings.json")
-    ap.add_argument("--pages", type=int, default=8)
     ap.add_argument("--min-links", type=int, default=MIN_SITELINKS)
     args = ap.parse_args()
 
     items, seen = [], set()
     t0 = time.time()
-    for page in range(args.pages):
-        q = QUERY % {"min_links": args.min_links, "max_year": MAX_YEAR, "limit": PAGE, "offset": page * PAGE}
-        print("page %d (offset %d)…" % (page + 1, page * PAGE), flush=True)
+    for lo, hi in BANDS:
+        if hi < args.min_links:
+            continue
+        q = QUERY % {"lo": max(lo, args.min_links), "hi": hi, "max_year": MAX_YEAR, "limit": PAGE}
+        print("band: %d–%d sitelinks…" % (lo, hi), flush=True)
         rows = run_query(q)
         if rows is None:
-            print("  giving up on this page", flush=True)
-            break
+            print("  giving up on this band", flush=True)
+            continue
         added = 0
         for b in rows:
             qid = val(b, "item").rsplit("/", 1)[-1]
@@ -169,8 +173,6 @@ def main():
             added += 1
         print("  +%d (total %d), %.0fs" % (added, len(items), time.time() - t0), flush=True)
         write_out(items, args.out)   # partial results survive a throttled or killed run
-        if len(rows) < PAGE:
-            break
         time.sleep(65)   # the query service asks for roughly one query a minute from us
 
     out = write_out(items, args.out)
